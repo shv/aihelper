@@ -1,3 +1,4 @@
+import hashlib
 from dataclasses import dataclass, field
 
 
@@ -12,6 +13,10 @@ class DocumentChunk:
     def embedding_text(self) -> str:
         return f"{self.title}\n{self.text}"
 
+    @property
+    def content_hash(self) -> str:
+        return hashlib.sha256(self.embedding_text.encode("utf-8")).hexdigest()
+
 
 @dataclass(frozen=True, slots=True)
 class EmbeddedChunk:
@@ -23,3 +28,10 @@ class EmbeddedChunk:
 class SearchResult:
     chunk: DocumentChunk
     score: float
+
+
+@dataclass(frozen=True, slots=True)
+class IndexedChunkState:
+    content_hash: str
+    embedding_model: str
+    metadata: dict[str, str]

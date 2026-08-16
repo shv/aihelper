@@ -1,12 +1,10 @@
-import hashlib
-
 import psycopg
 from pgvector import Vector
 from pgvector.psycopg import register_vector_async
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-from .models import DocumentChunk, EmbeddedChunk, SearchResult
+from .models import DocumentChunk, EmbeddedChunk, IndexedChunkState, SearchResult
 
 UPSERT_SQL = """
 INSERT INTO document_chunks (
@@ -61,6 +59,16 @@ ORDER BY embedding <=> %(embedding)s
 LIMIT %(top_k)s
 """
 
+INDEX_SQL = """
+SELECT
+    id,
+    content_hash,
+    embedding_model,
+    metadata
+FROM document_chunks
+WHERE id = ANY(%(chunk_ids)s)
+"""
+
 
 class PgVectorStore:
     def __init__(self, dsn: str) -> None:
@@ -71,9 +79,6 @@ class PgVectorStore:
     ) -> None:
         parameters: list[dict[str, object]] = []
         for embedded_chunk in chunks:
-            content_hash = hashlib.sha256(
-                embedded_chunk.chunk.embedding_text.encode("utf-8")
-            ).hexdigest()
             parameters.append(
                 {
                     "id": embedded_chunk.chunk.id,
@@ -81,7 +86,7 @@ class PgVectorStore:
                     "content": embedded_chunk.chunk.text,
                     "metadata": Jsonb(embedded_chunk.chunk.metadata),
                     "embedding": Vector(embedded_chunk.embedding),
-                    "content_hash": content_hash,
+                    "content_hash": embedded_chunk.chunk.content_hash,
                     "embedding_model": embedding_model,
                 }
             )
@@ -126,3 +131,22 @@ class PgVectorStore:
                     )
                     for row in await cursor.fetchall()
                 ]
+
+    async def get_index_state(
+        self, chunk_ids: list[str]
+    ) -> dict[str, IndexedChunkState]:
+        if not chunk_ids:
+            return {}
+
+        async with await psycopg.AsyncConnection.connect(self._dsn) as connection:
+            await register_vector_async(connection)
+            async with connection.cursor(row_factory=dict_row) as cursor:
+                await cursor.execute(INDEX_SQL, {"chunk_ids": chunk_ids})
+                return {
+                    row["id"]: IndexedChunkState(
+                        content_hash=row["content_hash"],
+                        embedding_model=row["embedding_model"],
+                        metadata=row["metadata"],
+                    )
+                    for row in await cursor.fetchall()
+                }

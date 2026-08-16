@@ -8,7 +8,8 @@ import os
 from openai import AsyncOpenAI
 
 from app.rag.embeddings import OpenAIEmbeddingProvider
-from app.rag.models import DocumentChunk, EmbeddedChunk
+from app.rag.indexing import RagIndexer
+from app.rag.models import DocumentChunk
 from app.rag.store import PgVectorStore
 
 MODEL = "text-embedding-3-small"
@@ -67,23 +68,14 @@ async def main() -> None:
     embedding_provider = OpenAIEmbeddingProvider(client, MODEL)
     store = PgVectorStore(os.environ["DATABASE_URL"])
 
-    chunk_embeddings = await embedding_provider.embed(
-        [chunk.embedding_text for chunk in CHUNKS]
-    )
-
-    embedded_chunks = [
-        EmbeddedChunk(chunk=chunk, embedding=embedding)
-        for chunk, embedding in zip(
-            CHUNKS,
-            chunk_embeddings,
-            strict=True,
-        )
-    ]
-
-    await store.upsert(
-        embedded_chunks,
+    indexer = RagIndexer(
+        embedding_provider,
+        store,
         embedding_model=MODEL,
     )
+
+    stats = await indexer.index(CHUNKS)
+    print("Indexing:", stats)
 
     query = "Подготовка стен ванной перед облицовкой"
     [query_embedding] = await embedding_provider.embed([query])
