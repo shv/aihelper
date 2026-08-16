@@ -9,9 +9,7 @@ class EmbeddingProvider(Protocol):
 
 
 class OpenAIEmbeddingProvider:
-    def __init__(
-        self, client: AsyncOpenAI, model: str = "text-embedding-3-small"
-    ) -> None:
+    def __init__(self, client: AsyncOpenAI, model: str) -> None:
         self._client = client
         self._model = model
 

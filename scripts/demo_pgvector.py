@@ -1,11 +1,15 @@
+"""
+export DATABASE_URL='postgresql://aihelper:aihelper@127.0.0.1:5433/aihelper'
+"""
+
 import asyncio
-import json
+import os
 
 from openai import AsyncOpenAI
 
 from app.rag.embeddings import OpenAIEmbeddingProvider
 from app.rag.models import DocumentChunk, EmbeddedChunk
-from app.rag.search import search_top_k
+from app.rag.store import PgVectorStore
 
 MODEL = "text-embedding-3-small"
 
@@ -60,15 +64,15 @@ CHUNKS = [
 
 async def main() -> None:
     client = AsyncOpenAI()
-    provider = OpenAIEmbeddingProvider(client, MODEL)
+    embedding_provider = OpenAIEmbeddingProvider(client, MODEL)
+    store = PgVectorStore(os.environ["DATABASE_URL"])
 
-    chunk_embeddings = await provider.embed([chunk.embedding_text for chunk in CHUNKS])
+    chunk_embeddings = await embedding_provider.embed(
+        [chunk.embedding_text for chunk in CHUNKS]
+    )
 
-    index = [
-        EmbeddedChunk(
-            chunk=chunk,
-            embedding=embedding,
-        )
+    embedded_chunks = [
+        EmbeddedChunk(chunk=chunk, embedding=embedding)
         for chunk, embedding in zip(
             CHUNKS,
             chunk_embeddings,
@@ -76,31 +80,30 @@ async def main() -> None:
         )
     ]
 
-    query = "Как безопасно повесить тяжёлый шкаф на гипсокартон?"
-    query = "Что сделать перед заменой розетки?"
-    query = "Подготовка стен ванной перед облицовкой"
-    [query_embedding] = await provider.embed([query])
-
-    results = search_top_k(
-        query_embedding,
-        index,
-        top_k=3,
+    await store.upsert(
+        embedded_chunks,
+        embedding_model=MODEL,
     )
 
-    payload = {
-        "query": query,
-        "results": [
-            {
-                "id": result.chunk.id,
-                "category": result.chunk.metadata["category"],
-                "score": round(result.score, 4),
-                "text": result.chunk.text,
-            }
-            for result in results
-        ],
-    }
+    query = "Подготовка стен ванной перед облицовкой"
+    [query_embedding] = await embedding_provider.embed([query])
 
-    print(json.dumps(payload, ensure_ascii=False))
+    results = await store.search(
+        query_embedding,
+        top_k=3,
+        embedding_model=MODEL,
+    )
+
+    print("Result 3:", results)
+
+    results = await store.search(
+        query_embedding,
+        top_k=3,
+        category="tile",
+        embedding_model=MODEL,
+    )
+
+    print("Result 1:", results)
 
 
 if __name__ == "__main__":
