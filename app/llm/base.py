@@ -13,3 +13,9 @@ class RepairAdviceResult:
 
 class RepairAdviceProvider(Protocol):
     async def get_repair_advice(self, message: str) -> RepairAdviceResult: ...
+
+
+class GroundedRepairAdviceProvider(Protocol):
+    async def get_grounded_repair_advice(
+        self, message: str, context: str
+    ) -> RepairAdviceResult: ...

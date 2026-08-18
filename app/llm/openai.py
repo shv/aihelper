@@ -1,3 +1,5 @@
+import json
+
 from openai import (
     APIConnectionError,
     APIError,
@@ -17,7 +19,20 @@ from app.llm.exceptions import (
 from app.schemas import RepairAdvice, TokenUsage
 
 from .base import RepairAdviceResult
-from .prompts import REPAIR_ASSISTANT_INSTRUCTIONS
+from .prompts import (
+    GROUNDED_REPAIR_ASSISTANT_INSTRUCTIONS,
+    REPAIR_ASSISTANT_INSTRUCTIONS,
+)
+
+
+def build_grounded_input(message: str, context: str) -> str:
+    return json.dumps(
+        {
+            "question": message,
+            "context": json.loads(context),
+        },
+        ensure_ascii=False,
+    )
 
 
 class OpenAIRepairAdviceProvider:
@@ -26,12 +41,27 @@ class OpenAIRepairAdviceProvider:
         self._model = model
 
     async def get_repair_advice(self, message: str) -> RepairAdviceResult:
+        return await self._request_repair_advice(
+            input_text=message, instructions=REPAIR_ASSISTANT_INSTRUCTIONS
+        )
+
+    async def get_grounded_repair_advice(
+        self, message: str, context: str
+    ) -> RepairAdviceResult:
+        return await self._request_repair_advice(
+            input_text=build_grounded_input(message, context),
+            instructions=GROUNDED_REPAIR_ASSISTANT_INSTRUCTIONS,
+        )
+
+    async def _request_repair_advice(
+        self, input_text: str, instructions: str
+    ) -> RepairAdviceResult:
         try:
             response = await self._client.responses.parse(
                 model=self._model,
                 reasoning={"effort": "low"},
-                instructions=REPAIR_ASSISTANT_INSTRUCTIONS,
-                input=message,
+                instructions=instructions,
+                input=input_text,
                 text_format=RepairAdvice,
             )
         except APITimeoutError as error:
