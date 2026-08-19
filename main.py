@@ -46,8 +46,9 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-MODEL = "gpt-5.6-luna"  # "gpt-5.6" - дороже
 EMBEDDING_MODEL = "text-embedding-3-small"
+MODEL = "gpt-5.6-luna"  # "gpt-5.6" - дороже
+RAG_MIN_SCORE = 0.45
 RAG_TOP_K = 3
 
 
@@ -273,6 +274,7 @@ def get_rag_service(
         advice_provider=advice_provider,
         embedding_model=EMBEDDING_MODEL,
         top_k=RAG_TOP_K,
+        min_score=RAG_MIN_SCORE,
     )
 
 
@@ -283,9 +285,10 @@ async def chat_rag(
     result = await service.get_repair_advice(request.message, category=request.category)
 
     return RagChatResponse(
-        advice=result.advice_result.advice,
-        model=result.advice_result.model,
-        usage=result.advice_result.usage,
+        status=result.status,
+        advice=result.advice,
+        model=result.model,
+        usage=result.usage,
         sources=[
             RagSource(
                 id=source.chunk.id,

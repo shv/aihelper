@@ -68,6 +68,11 @@ class ChatResponse(BaseModel):
     usage: TokenUsage
 
 
+class RagAnswerStatus(StrEnum):
+    ANSWERED = "answered"
+    INSUFFICIENT_CONTEXT = "insufficient_context"
+
+
 class RagChatRequest(ChatRequest):
     category: str | None = None
 
@@ -79,5 +84,9 @@ class RagSource(BaseModel):
     score: float
 
 
-class RagChatResponse(ChatResponse):
+class RagChatResponse(BaseModel):
+    status: RagAnswerStatus
+    advice: RepairAdvice
+    model: str | None
+    usage: TokenUsage | None
     sources: list[RagSource]

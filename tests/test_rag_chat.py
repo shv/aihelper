@@ -15,7 +15,13 @@ from app.llm.exceptions import (
 )
 from app.rag.models import DocumentChunk, SearchResult
 from app.rag.service import GroundedRepairAdviceResult
-from app.schemas import RepairAdvice, RepairRisk, RiskLevel, TokenUsage
+from app.schemas import (
+    RagAnswerStatus,
+    RepairAdvice,
+    RepairRisk,
+    RiskLevel,
+    TokenUsage,
+)
 from main import app, get_rag_service
 
 
@@ -54,32 +60,52 @@ def make_result(
     *,
     sources: list[SearchResult] | None = None,
 ) -> GroundedRepairAdviceResult:
-    return GroundedRepairAdviceResult(
-        advice_result=RepairAdviceResult(
-            advice=RepairAdvice(
-                summary="Перед плиткой подготовьте основание",
-                clarifying_questions=["Какая поверхность основания?"],
-                recommendations=[
-                    "Очистить основание",
-                    "Нанести грунтовку и гидроизоляцию",
-                ],
-                risks=[
-                    RepairRisk(
-                        level=RiskLevel.MEDIUM,
-                        description="Отслоение плитки",
-                        mitigation="Соблюдать технологию подготовки",
-                    )
-                ],
-                requires_professional=False,
-            ),
-            model="fake-model",
-            usage=TokenUsage(
-                input_tokens=100,
-                output_tokens=50,
-                total_tokens=150,
-            ),
+    advice_result = RepairAdviceResult(
+        advice=RepairAdvice(
+            summary="Перед плиткой подготовьте основание",
+            clarifying_questions=["Какая поверхность основания?"],
+            recommendations=[
+                "Очистить основание",
+                "Нанести грунтовку и гидроизоляцию",
+            ],
+            risks=[
+                RepairRisk(
+                    level=RiskLevel.MEDIUM,
+                    description="Отслоение плитки",
+                    mitigation="Соблюдать технологию подготовки",
+                )
+            ],
+            requires_professional=False,
         ),
+        model="fake-model",
+        usage=TokenUsage(
+            input_tokens=100,
+            output_tokens=50,
+            total_tokens=150,
+        ),
+    )
+    return GroundedRepairAdviceResult(
+        status=RagAnswerStatus.ANSWERED,
+        advice=advice_result.advice,
+        model=advice_result.model,
+        usage=advice_result.usage,
         sources=[] if sources is None else sources,
+    )
+
+
+def make_insufficient_context_result() -> GroundedRepairAdviceResult:
+    return GroundedRepairAdviceResult(
+        status=RagAnswerStatus.INSUFFICIENT_CONTEXT,
+        advice=RepairAdvice(
+            summary="В базе знаний нет данных для ответа на этот вопрос.",
+            clarifying_questions=[],
+            recommendations=[],
+            risks=[],
+            requires_professional=False,
+        ),
+        model=None,
+        usage=None,
+        sources=[],
     )
 
 
@@ -114,6 +140,7 @@ def test_chat_rag_returns_grounded_advice_and_sources(
         ("Что сделать перед укладкой плитки в ванной?", "tile")
     ]
     assert response.json() == {
+        "status": "answered",
         "advice": {
             "summary": "Перед плиткой подготовьте основание",
             "clarifying_questions": ["Какая поверхность основания?"],
@@ -161,6 +188,34 @@ def test_chat_rag_passes_none_when_category_is_omitted(
     assert response.status_code == 200
     assert fake_service.calls == [("Как подготовить основание?", None)]
     assert response.json()["sources"] == []
+
+
+def test_chat_rag_returns_explicit_insufficient_context_response(
+    client: TestClient,
+) -> None:
+    fake_service = FakeRagService(result=make_insufficient_context_result())
+    app.dependency_overrides[get_rag_service] = lambda: fake_service
+
+    response = client.post(
+        "/chat/rag",
+        json={"message": "Как настроить Wi-Fi роутер?"},
+    )
+
+    assert response.status_code == 200
+    assert fake_service.calls == [("Как настроить Wi-Fi роутер?", None)]
+    assert response.json() == {
+        "status": "insufficient_context",
+        "advice": {
+            "summary": "В базе знаний нет данных для ответа на этот вопрос.",
+            "clarifying_questions": [],
+            "recommendations": [],
+            "risks": [],
+            "requires_professional": False,
+        },
+        "model": None,
+        "usage": None,
+        "sources": [],
+    }
 
 
 @pytest.mark.parametrize(
