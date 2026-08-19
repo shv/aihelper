@@ -66,3 +66,18 @@ class ChatResponse(BaseModel):
     advice: RepairAdvice
     model: str
     usage: TokenUsage
+
+
+class RagChatRequest(ChatRequest):
+    category: str | None = None
+
+
+class RagSource(BaseModel):
+    id: str
+    title: str
+    text: str
+    score: float
+
+
+class RagChatResponse(ChatResponse):
+    sources: list[RagSource]

@@ -1,5 +1,6 @@
 import json
 import math
+import os
 from collections.abc import AsyncIterator
 from functools import lru_cache
 from typing import Annotated
@@ -10,12 +11,18 @@ from openai import AsyncOpenAI
 from openai.types.responses import FunctionToolParam, ResponseInputParam
 
 from app.http_errors import register_exception_handlers
-from app.llm.base import RepairAdviceProvider
+from app.llm.base import GroundedRepairAdviceProvider, RepairAdviceProvider
 from app.llm.openai import OpenAIRepairAdviceProvider
 from app.llm.prompts import REPAIR_ASSISTANT_INSTRUCTIONS
+from app.rag.embeddings import EmbeddingProvider, OpenAIEmbeddingProvider
+from app.rag.service import RagService, SearchStore
+from app.rag.store import PgVectorStore
 from app.schemas import (
     ChatRequest,
     ChatResponse,
+    RagChatRequest,
+    RagChatResponse,
+    RagSource,
     TileCalculationInput,
     ToolChatResponse,
 )
@@ -40,6 +47,8 @@ async def health() -> dict[str, str]:
 
 
 MODEL = "gpt-5.6-luna"  # "gpt-5.6" - дороже
+EMBEDDING_MODEL = "text-embedding-3-small"
+RAG_TOP_K = 3
 
 
 @lru_cache
@@ -225,4 +234,65 @@ async def chat_with_tools(
     return ToolChatResponse(
         answer=final_response.output_text,
         tools_used=tools_used,
+    )
+
+
+def get_embedding_provider(client: OpenAIClientDependency) -> EmbeddingProvider:
+    return OpenAIEmbeddingProvider(client=client, model=EMBEDDING_MODEL)
+
+
+def get_grounded_repair_advice_provider(
+    client: OpenAIClientDependency,
+) -> GroundedRepairAdviceProvider:
+    return OpenAIRepairAdviceProvider(client=client, model=MODEL)
+
+
+def get_search_store() -> SearchStore:
+    return PgVectorStore(dsn=os.environ["DATABASE_URL"])
+
+
+EmbeddingProviderDependency = Annotated[
+    EmbeddingProvider, Depends(get_embedding_provider)
+]
+
+SearchStoreDependency = Annotated[SearchStore, Depends(get_search_store)]
+
+GroundedProviderDependency = Annotated[
+    GroundedRepairAdviceProvider, Depends(get_grounded_repair_advice_provider)
+]
+
+
+def get_rag_service(
+    embedding_provider: EmbeddingProviderDependency,
+    search_store: SearchStoreDependency,
+    advice_provider: GroundedProviderDependency,
+) -> RagService:
+    return RagService(
+        embedding_provider=embedding_provider,
+        search_store=search_store,
+        advice_provider=advice_provider,
+        embedding_model=EMBEDDING_MODEL,
+        top_k=RAG_TOP_K,
+    )
+
+
+@app.post("/chat/rag", response_model=RagChatResponse)
+async def chat_rag(
+    request: RagChatRequest, service: Annotated[RagService, Depends(get_rag_service)]
+) -> RagChatResponse:
+    result = await service.get_repair_advice(request.message, category=request.category)
+
+    return RagChatResponse(
+        advice=result.advice_result.advice,
+        model=result.advice_result.model,
+        usage=result.advice_result.usage,
+        sources=[
+            RagSource(
+                id=source.chunk.id,
+                title=source.chunk.title,
+                text=source.chunk.text,
+                score=source.score,
+            )
+            for source in result.sources
+        ],
     )
