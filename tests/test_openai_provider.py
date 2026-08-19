@@ -24,10 +24,49 @@ from app.llm.exceptions import (
 )
 from app.llm.openai import OpenAIRepairAdviceProvider, build_grounded_input
 from app.llm.prompts import (
+    COMMON_REPAIR_ASSISTANT_INSTRUCTIONS,
     GROUNDED_REPAIR_ASSISTANT_INSTRUCTIONS,
     REPAIR_ASSISTANT_INSTRUCTIONS,
 )
 from app.schemas import RepairAdvice
+
+
+def test_both_repair_prompts_include_common_instructions_once() -> None:
+    assert (
+        REPAIR_ASSISTANT_INSTRUCTIONS.count(COMMON_REPAIR_ASSISTANT_INSTRUCTIONS) == 1
+    )
+    assert (
+        GROUNDED_REPAIR_ASSISTANT_INSTRUCTIONS.count(
+            COMMON_REPAIR_ASSISTANT_INSTRUCTIONS
+        )
+        == 1
+    )
+
+
+def test_repair_prompt_contains_only_general_knowledge_mode_rules() -> None:
+    assert "ответ на основании общих знаний модели" in REPAIR_ASSISTANT_INSTRUCTIONS
+    assert "сначала задай уточняющие вопросы" in REPAIR_ASSISTANT_INSTRUCTIONS
+    assert (
+        "Context является единственным источником" not in REPAIR_ASSISTANT_INSTRUCTIONS
+    )
+
+
+def test_grounded_prompt_contains_only_context_bound_mode_rules() -> None:
+    assert (
+        "ответ только на основании базы знаний"
+        in GROUNDED_REPAIR_ASSISTANT_INSTRUCTIONS
+    )
+    assert (
+        "Context является единственным источником"
+        in GROUNDED_REPAIR_ASSISTANT_INSTRUCTIONS
+    )
+    assert (
+        "Каждое фактическое утверждение ответа можно подтвердить текстом context"
+        in GROUNDED_REPAIR_ASSISTANT_INSTRUCTIONS
+    )
+    assert (
+        "сначала задай уточняющие вопросы" not in GROUNDED_REPAIR_ASSISTANT_INSTRUCTIONS
+    )
 
 
 def make_client(parse_mock: AsyncMock) -> AsyncOpenAI:
