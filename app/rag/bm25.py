@@ -4,16 +4,16 @@ from collections import Counter
 
 from .models import DocumentChunk, SearchResult
 
-TOCKEN_PATTERN = re.compile(r"[0-9a-zа-яё]+(?:[.-][0-9a-zа-яё]+)*", re.IGNORECASE)
+TOKEN_PATTERN = re.compile(r"[0-9a-zа-яё]+(?:[.-][0-9a-zа-яё]+)*", re.IGNORECASE)
 
 
-def tockenize(text: str) -> list[str]:
-    return TOCKEN_PATTERN.findall(text.lower())
+def tokenize(text: str) -> list[str]:
+    return TOKEN_PATTERN.findall(text.lower())
 
 
 class Bm25Index:
     def __init__(self, chunks: list[DocumentChunk], *, k1: float, b: float) -> None:
-        if k1 < 0:
+        if k1 <= 0:
             raise ValueError("k1 must be positive")
 
         if not 0 <= b <= 1:
@@ -23,11 +23,11 @@ class Bm25Index:
         self._k1 = k1
         self._b = b
 
-        document_tockens = [tockenize(chunk.embedding_text) for chunk in chunks]
+        document_tokens = [tokenize(chunk.embedding_text) for chunk in chunks]
 
-        self._term_frequencies = [Counter(tockens) for tockens in document_tockens]
+        self._term_frequencies = [Counter(tokens) for tokens in document_tokens]
 
-        self._document_lengths = [len(tockens) for tockens in document_tockens]
+        self._document_lengths = [len(tokens) for tokens in document_tokens]
 
         self._document_frequencies: Counter[str] = Counter()
 
@@ -46,7 +46,7 @@ class Bm25Index:
         if top_k <= 0:
             raise ValueError("top_k must be positive")
 
-        query_terms = set(tockenize(query))
+        query_terms = set(tokenize(query))
 
         if not query_terms:
             return []
@@ -88,7 +88,9 @@ class Bm25Index:
             document_frequency = self._document_frequencies[term]
 
             inverse_document_frequency = math.log(
-                1 + (document_count - document_frequency + 0.5)
+                1
+                + (document_count - document_frequency + 0.5)
+                / (document_frequency + 0.5)
             )
 
             length_normalization = (
