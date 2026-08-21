@@ -74,15 +74,15 @@ class Bm25Index:
         if document_count == 0:
             return 0.0
 
-        term_friequencies = self._term_frequencies[document_index]
+        term_frequencies = self._term_frequencies[document_index]
         document_length = self._document_lengths[document_index]
 
         score = 0.0
 
         for term in query_terms:
-            term_friequency = term_friequencies.get(term, 0)
+            term_frequency = term_frequencies.get(term, 0)
 
-            if term_friequency == 0:
+            if term_frequency == 0:
                 continue
 
             document_frequency = self._document_frequencies[term]
@@ -99,9 +99,9 @@ class Bm25Index:
 
             term_score = (
                 inverse_document_frequency
-                * term_friequency
+                * term_frequency
                 * (self._k1 + 1)
-                / (term_friequency + self._k1 * length_normalization)
+                / (term_frequency + self._k1 * length_normalization)
             )
 
             score += term_score
