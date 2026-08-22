@@ -70,6 +70,35 @@ WHERE id = ANY(%(chunk_ids)s)
 """
 
 
+BM25_SEARCH_SQL = """
+SELECT
+    id,
+    title,
+    content,
+    metadata,
+    -(
+        (title || E'\\n' || content)
+        <@> to_bm25query(
+            %(query)s,
+            'document_chunks_bm25_idx'
+        )
+    ) AS score
+FROM document_chunks
+WHERE
+    (
+        %(category)s::text IS NULL
+        OR metadata ->> 'category' = %(category)s
+    )
+ORDER BY
+    (title || E'\\n' || content)
+    <@> to_bm25query(
+        %(query)s,
+        'document_chunks_bm25_idx'
+    )
+LIMIT %(top_k)s
+"""
+
+
 class PgVectorStore:
     def __init__(self, dsn: str) -> None:
         self._dsn = dsn
@@ -150,3 +179,40 @@ class PgVectorStore:
                     )
                     for row in await cursor.fetchall()
                 }
+
+    async def search_bm25(
+        self, query: str, *, top_k: int, category: str | None = None
+    ) -> list[SearchResult]:
+        if not query.strip():
+            raise ValueError("query must not be blank")
+
+        if top_k <= 0:
+            raise ValueError("top_k must be positive")
+
+        parameters = {
+            "query": query,
+            "category": category,
+            "top_k": top_k,
+        }
+
+        async with (
+            await psycopg.AsyncConnection.connect(self._dsn) as connection,
+            connection.cursor(row_factory=dict_row) as cursor,
+        ):
+            await cursor.execute(
+                BM25_SEARCH_SQL,
+                parameters,
+            )
+
+            return [
+                SearchResult(
+                    chunk=DocumentChunk(
+                        id=row["id"],
+                        title=row["title"],
+                        text=row["content"],
+                        metadata=row["metadata"],
+                    ),
+                    score=float(row["score"]),
+                )
+                for row in await cursor.fetchall()
+            ]

@@ -8,3 +8,4 @@ __pycache__/
 .python-version
 LEARNING_PLAN.md
 compose.yaml
+docker/postgres
