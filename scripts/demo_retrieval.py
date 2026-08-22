@@ -5,6 +5,7 @@ from openai import AsyncOpenAI
 
 from app.rag.bm25 import Bm25Index
 from app.rag.embeddings import OpenAIEmbeddingProvider
+from app.rag.fusion import reciprocal_rank_fusion
 from app.rag.models import DocumentChunk, EmbeddedChunk
 from app.rag.search import search_top_k
 
@@ -112,6 +113,10 @@ async def main() -> None:
 
         bm25_results = bm25_index.search(query, top_k=3, category=None)
 
+        hybrid_results = reciprocal_rank_fusion(
+            [vector_results, bm25_results], rrf_k=60, top_k=3
+        )
+
         payload = {
             "query": query,
             "vector": [
@@ -131,6 +136,15 @@ async def main() -> None:
                     "text": result.chunk.text,
                 }
                 for result in bm25_results
+            ],
+            "hybrid": [
+                {
+                    "id": result.chunk.id,
+                    "category": result.chunk.metadata["category"],
+                    "score": round(result.score, 4),
+                    "text": result.chunk.text,
+                }
+                for result in hybrid_results
             ],
         }
         comparsions.append(payload)
