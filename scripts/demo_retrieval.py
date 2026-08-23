@@ -6,70 +6,12 @@ from openai import AsyncOpenAI
 from app.rag.bm25 import Bm25Index
 from app.rag.embeddings import OpenAIEmbeddingProvider
 from app.rag.fusion import reciprocal_rank_fusion
-from app.rag.models import DocumentChunk, EmbeddedChunk
+from app.rag.models import EmbeddedChunk
 from app.rag.search import search_top_k
 
-MODEL = "text-embedding-3-small"
+from .demo_documents import CHUNKS
 
-CHUNKS = [
-    DocumentChunk(
-        id="gkl-cabinet",
-        title="Крепление тяжёлого шкафа к стене из ГКЛ",
-        text=(
-            "Тяжёлый навесной шкаф на стене из ГКЛ рекомендуется "
-            "крепить к стойкам каркаса или заранее установленной закладной."
-        ),
-        metadata={"category": "gkl"},
-    ),
-    DocumentChunk(
-        id="tile-waterproofing",
-        title="Подготовка мокрой зоны перед укладкой плитки",
-        text=(
-            "Перед укладкой плитки в мокрой зоне основание очищают, "
-            "грунтуют и выполняют гидроизоляцию."
-        ),
-        metadata={"category": "tile"},
-    ),
-    DocumentChunk(
-        id="electricity-safety",
-        title="Безопасность при работах с розетками",
-        text=(
-            "Перед работами с розеткой необходимо отключить автомат "
-            "и проверить отсутствие напряжения измерительным прибором."
-        ),
-        metadata={"category": "electricity"},
-    ),
-    DocumentChunk(
-        id="plumbing-leak",
-        title="Первые действия при протечке",
-        text=(
-            "При протечке сначала перекрывают воду, затем определяют "
-            "место повреждения соединения или трубы."
-        ),
-        metadata={"category": "plumbing"},
-    ),
-    DocumentChunk(
-        id="laminate-gap",
-        title="Компенсационный зазор при укладке ламината",
-        text=(
-            "При укладке ламината вдоль стен оставляют компенсационный "
-            "зазор для температурного расширения покрытия."
-        ),
-        metadata={"category": "flooring"},
-    ),
-    DocumentChunk(
-        id="tile-adhesive-c2te-s1",
-        title="Плиточный клей класса C2TE S1",
-        text="Клей имеет классификацию C2TE S1.",
-        metadata={"category": "tile"},
-    ),
-    DocumentChunk(
-        id="tile-adhesive-c1",
-        title="Плиточный клей класса C1",
-        text="Клей имеет классификацию C1.",
-        metadata={"category": "tile"},
-    ),
-]
+MODEL = "text-embedding-3-small"
 
 
 async def main() -> None:

@@ -1,9 +1,11 @@
+import asyncio
 from dataclasses import dataclass
 from typing import Protocol
 
 from app.llm.base import GroundedRepairAdviceProvider
 from app.rag.context import build_rag_context
 from app.rag.embeddings import EmbeddingProvider
+from app.rag.fusion import reciprocal_rank_fusion
 from app.rag.models import SearchResult
 from app.schemas import RagAnswerStatus, RepairAdvice, TokenUsage
 
@@ -16,6 +18,10 @@ class SearchStore(Protocol):
         embedding_model: str,
         top_k: int,
         category: str | None = None,
+    ) -> list[SearchResult]: ...
+
+    async def search_bm25(
+        self, query: str, *, top_k: int, category: str | None = None
     ) -> list[SearchResult]: ...
 
 
@@ -36,37 +42,67 @@ class RagService:
         advice_provider: GroundedRepairAdviceProvider,
         *,
         embedding_model: str,
-        top_k: int,
-        min_score: float,
+        vector_candidate_top_k: int,
+        bm25_candidate_top_k: int,
+        context_top_k: int,
+        rrf_k: int,
+        min_vector_score: float,
     ) -> None:
-        if top_k <= 0:
-            raise ValueError("top_k must be positive")
+        if vector_candidate_top_k <= 0:
+            raise ValueError("vector_candidate_top_k must be positive")
 
-        if not -1.0 <= min_score <= 1.0:
-            raise ValueError("min_score must be between -1 and 1")
+        if bm25_candidate_top_k <= 0:
+            raise ValueError("bm25_candidate_top_k must be positive")
+
+        if context_top_k <= 0:
+            raise ValueError("context_top_k must be positive")
+
+        if rrf_k <= 0:
+            raise ValueError("rrf_k must be positive")
+
+        if not -1.0 <= min_vector_score <= 1.0:
+            raise ValueError("min_vector_score must be between -1 and 1")
 
         self._embedding_provider = embedding_provider
         self._search_store = search_store
         self._advice_provider = advice_provider
         self._embedding_model = embedding_model
-        self._top_k = top_k
-        self._min_score = min_score
+        self._vector_candidate_top_k = vector_candidate_top_k
+        self._bm25_candidate_top_k = bm25_candidate_top_k
+        self._context_top_k = context_top_k
+        self._rrf_k = rrf_k
+        self._min_vector_score = min_vector_score
 
     async def get_repair_advice(
         self, message: str, *, category: str | None = None
     ) -> GroundedRepairAdviceResult:
         [query_embedding] = await self._embedding_provider.embed([message])
 
-        search_result = await self._search_store.search(
-            query_embedding,
-            embedding_model=self._embedding_model,
-            top_k=self._top_k,
-            category=category,
+        vector_results, bm25_result = await asyncio.gather(
+            self._search_store.search(
+                query_embedding,
+                embedding_model=self._embedding_model,
+                top_k=self._vector_candidate_top_k,
+                category=category,
+            ),
+            self._search_store.search_bm25(
+                message,
+                top_k=self._bm25_candidate_top_k,
+                category=category,
+            ),
         )
 
-        relevant_results = [
-            result for result in search_result if result.score >= self._min_score
+        relevant_vector_results = [
+            result
+            for result in vector_results
+            if result.score >= self._min_vector_score
         ]
+
+        relevant_results = reciprocal_rank_fusion(
+            [relevant_vector_results, bm25_result],
+            rrf_k=self._rrf_k,
+            top_k=self._context_top_k,
+        )
 
         if not relevant_results:
             return GroundedRepairAdviceResult(

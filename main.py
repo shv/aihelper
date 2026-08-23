@@ -48,8 +48,11 @@ async def health() -> dict[str, str]:
 
 EMBEDDING_MODEL = "text-embedding-3-small"
 MODEL = "gpt-5.6-luna"  # "gpt-5.6" - дороже
-RAG_MIN_SCORE = 0.45
-RAG_TOP_K = 3
+RAG_VECTOR_CANDIDATE_TOP_K = 10
+RAG_BM25_CANDIDATE_TOP_K = 10
+RAG_CONTEXT_TOP_K = 3
+RAG_RRF_K = 60
+RAG_MIN_VECTOR_SCORE = 0.45
 
 
 @lru_cache
@@ -273,8 +276,11 @@ def get_rag_service(
         search_store=search_store,
         advice_provider=advice_provider,
         embedding_model=EMBEDDING_MODEL,
-        top_k=RAG_TOP_K,
-        min_score=RAG_MIN_SCORE,
+        vector_candidate_top_k=RAG_VECTOR_CANDIDATE_TOP_K,
+        bm25_candidate_top_k=RAG_BM25_CANDIDATE_TOP_K,
+        context_top_k=RAG_CONTEXT_TOP_K,
+        rrf_k=RAG_RRF_K,
+        min_vector_score=RAG_MIN_VECTOR_SCORE,
     )
 
 
