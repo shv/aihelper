@@ -3,10 +3,11 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from app.llm.base import RepairAdviceResult
+from app.llm.base import GroundedRepairAdviceProviderResult
+from app.llm.exceptions import LLMInvalidResponseError
 from app.rag.models import DocumentChunk, SearchResult
 from app.rag.service import GroundedRepairAdviceResult, RagService
-from app.schemas import RagAnswerStatus, RepairAdvice, TokenUsage
+from app.schemas import RagAnswerStatus, RagCitation, RepairAdvice, TokenUsage
 
 EMBEDDING_MODEL = "test-embedding-model"
 QUERY_EMBEDDING = [0.1, 0.2, 0.3]
@@ -76,20 +77,23 @@ class FakeReranker:
 
 @dataclass
 class FakeGroundedAdviceProvider:
-    result: RepairAdviceResult
+    result: GroundedRepairAdviceProviderResult
     calls: list[tuple[str, str]] = field(default_factory=list)
 
     async def get_grounded_repair_advice(
         self,
         message: str,
         context: str,
-    ) -> RepairAdviceResult:
+    ) -> GroundedRepairAdviceProviderResult:
         self.calls.append((message, context))
         return self.result
 
 
-def make_advice_result() -> RepairAdviceResult:
-    return RepairAdviceResult(
+def make_advice_result(
+    source_id: str,
+    quote: str,
+) -> GroundedRepairAdviceProviderResult:
+    return GroundedRepairAdviceProviderResult(
         advice=RepairAdvice(
             summary="Использовать гидроизоляцию",
             clarifying_questions=[],
@@ -99,6 +103,7 @@ def make_advice_result() -> RepairAdviceResult:
         ),
         model="fake-model",
         usage=TokenUsage(input_tokens=10, output_tokens=20, total_tokens=30),
+        citations=[RagCitation(source_id=source_id, quote=quote)],
     )
 
 
@@ -182,7 +187,7 @@ async def test_get_repair_advice_orchestrates_reranked_hybrid_pipeline() -> None
         bm25_results=[label, c1, explanation],
     )
     reranker = FakeReranker(results=reranked)
-    advice_result = make_advice_result()
+    advice_result = make_advice_result("c2te-s1", "Text c2te-s1")
     advice_provider = FakeGroundedAdviceProvider(advice_result)
     service = make_default_service(
         embedding_provider,
@@ -195,6 +200,7 @@ async def test_get_repair_advice_orchestrates_reranked_hybrid_pipeline() -> None
 
     assert result.status is RagAnswerStatus.ANSWERED
     assert result.advice == advice_result.advice
+    assert result.citations == advice_result.citations
     assert result.model == advice_result.model
     assert result.usage == advice_result.usage
     assert [(source.chunk.id, source.score) for source in result.sources] == [
@@ -241,7 +247,7 @@ async def test_filters_vector_results_before_rrf_and_reranking() -> None:
             bm25_results=[],
         ),
         reranker,
-        FakeGroundedAdviceProvider(make_advice_result()),
+        FakeGroundedAdviceProvider(make_advice_result("relevant", "Text relevant")),
     )
 
     result = await service.get_repair_advice("Вопрос", category=None)
@@ -266,7 +272,12 @@ async def test_bm25_match_survives_weak_vector_score_and_reaches_reranker() -> N
             bm25_results=[exact_match],
         ),
         reranker,
-        FakeGroundedAdviceProvider(make_advice_result()),
+        FakeGroundedAdviceProvider(
+            make_advice_result(
+                "tile-adhesive-c2te-s1",
+                "Text tile-adhesive-c2te-s1",
+            )
+        ),
     )
 
     result = await service.get_repair_advice("C2TE S1", category=None)
@@ -298,7 +309,7 @@ async def test_applies_rerank_threshold_before_context_top_k() -> None:
         FakeEmbeddingProvider(),
         FakeSearchStore(vector_results=vector_results, bm25_results=[]),
         reranker,
-        FakeGroundedAdviceProvider(make_advice_result()),
+        FakeGroundedAdviceProvider(make_advice_result("chunk-4", "Text chunk-4")),
         vector_candidate_top_k=VECTOR_CANDIDATE_TOP_K,
         bm25_candidate_top_k=BM25_CANDIDATE_TOP_K,
         rerank_candidate_top_k=RERANK_CANDIDATE_TOP_K,
@@ -317,7 +328,9 @@ async def test_applies_rerank_threshold_before_context_top_k() -> None:
 @pytest.mark.asyncio
 async def test_empty_retrieval_passes_empty_candidates_and_abstains() -> None:
     reranker = FakeReranker(results=[])
-    advice_provider = FakeGroundedAdviceProvider(make_advice_result())
+    advice_provider = FakeGroundedAdviceProvider(
+        make_advice_result("placeholder", "Text placeholder")
+    )
     service = make_default_service(
         FakeEmbeddingProvider(),
         FakeSearchStore(vector_results=[], bm25_results=[]),
@@ -336,6 +349,7 @@ async def test_empty_retrieval_passes_empty_candidates_and_abstains() -> None:
             risks=[],
             requires_professional=False,
         ),
+        citations=[],
         model=None,
         usage=None,
         sources=[],
@@ -350,7 +364,9 @@ async def test_abstains_when_all_reranked_candidates_are_below_threshold() -> No
     reranker = FakeReranker(
         results=[make_search_result("topical-only", score=MIN_RERANK_SCORE - 1)]
     )
-    advice_provider = FakeGroundedAdviceProvider(make_advice_result())
+    advice_provider = FakeGroundedAdviceProvider(
+        make_advice_result("placeholder", "Text placeholder")
+    )
     service = make_default_service(
         FakeEmbeddingProvider(),
         FakeSearchStore(vector_results=[candidate], bm25_results=[]),
@@ -365,6 +381,28 @@ async def test_abstains_when_all_reranked_candidates_are_below_threshold() -> No
     assert result.usage is None
     assert result.sources == []
     assert advice_provider.calls == []
+
+
+@pytest.mark.asyncio
+async def test_rejects_provider_citation_not_present_in_final_context() -> None:
+    candidate = make_search_result("c2te-s1", score=0.8)
+    advice_provider = FakeGroundedAdviceProvider(
+        make_advice_result("c2te-s1", "Выдуманная цитата")
+    )
+    service = make_default_service(
+        FakeEmbeddingProvider(),
+        FakeSearchStore(vector_results=[candidate], bm25_results=[]),
+        FakeReranker(results=[make_search_result("c2te-s1", score=3.0)]),
+        advice_provider,
+    )
+
+    with pytest.raises(
+        LLMInvalidResponseError,
+        match="Citation is not an exact quote from source: c2te-s1",
+    ):
+        await service.get_repair_advice("Что означает C2TE S1?", category=None)
+
+    assert len(advice_provider.calls) == 1
 
 
 @pytest.mark.parametrize(
@@ -397,7 +435,9 @@ def test_rejects_non_positive_integer_configuration(
             embedding_provider=FakeEmbeddingProvider(),
             search_store=FakeSearchStore(vector_results=[], bm25_results=[]),
             reranker=FakeReranker(results=[]),
-            advice_provider=FakeGroundedAdviceProvider(make_advice_result()),
+            advice_provider=FakeGroundedAdviceProvider(
+                make_advice_result("placeholder", "Text placeholder")
+            ),
             embedding_model=EMBEDDING_MODEL,
             vector_candidate_top_k=parameters["vector_candidate_top_k"],
             bm25_candidate_top_k=parameters["bm25_candidate_top_k"],
@@ -418,7 +458,9 @@ def test_rejects_context_top_k_greater_than_rerank_candidate_top_k() -> None:
             FakeEmbeddingProvider(),
             FakeSearchStore(vector_results=[], bm25_results=[]),
             FakeReranker(results=[]),
-            FakeGroundedAdviceProvider(make_advice_result()),
+            FakeGroundedAdviceProvider(
+                make_advice_result("placeholder", "Text placeholder")
+            ),
             vector_candidate_top_k=VECTOR_CANDIDATE_TOP_K,
             bm25_candidate_top_k=BM25_CANDIDATE_TOP_K,
             rerank_candidate_top_k=2,
@@ -438,7 +480,9 @@ def test_rejects_min_vector_score_outside_cosine_range(
             FakeEmbeddingProvider(),
             FakeSearchStore(vector_results=[], bm25_results=[]),
             FakeReranker(results=[]),
-            FakeGroundedAdviceProvider(make_advice_result()),
+            FakeGroundedAdviceProvider(
+                make_advice_result("placeholder", "Text placeholder")
+            ),
             vector_candidate_top_k=VECTOR_CANDIDATE_TOP_K,
             bm25_candidate_top_k=BM25_CANDIDATE_TOP_K,
             rerank_candidate_top_k=RERANK_CANDIDATE_TOP_K,
@@ -458,7 +502,9 @@ def test_rejects_min_rerank_score_outside_relevance_range(
             FakeEmbeddingProvider(),
             FakeSearchStore(vector_results=[], bm25_results=[]),
             FakeReranker(results=[]),
-            FakeGroundedAdviceProvider(make_advice_result()),
+            FakeGroundedAdviceProvider(
+                make_advice_result("placeholder", "Text placeholder")
+            ),
             vector_candidate_top_k=VECTOR_CANDIDATE_TOP_K,
             bm25_candidate_top_k=BM25_CANDIDATE_TOP_K,
             rerank_candidate_top_k=RERANK_CANDIDATE_TOP_K,
@@ -480,7 +526,9 @@ async def test_rejects_wrong_number_of_query_embeddings(
 ) -> None:
     search_store = FakeSearchStore(vector_results=[], bm25_results=[])
     reranker = FakeReranker(results=[])
-    advice_provider = FakeGroundedAdviceProvider(make_advice_result())
+    advice_provider = FakeGroundedAdviceProvider(
+        make_advice_result("placeholder", "Text placeholder")
+    )
     service = make_default_service(
         FakeEmbeddingProvider(embeddings),
         search_store,

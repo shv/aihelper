@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Protocol
 
-from app.schemas import RepairAdvice, TokenUsage
+from app.schemas import RagCitation, RepairAdvice, TokenUsage
 
 
 @dataclass(frozen=True, slots=True)
@@ -11,6 +11,11 @@ class RepairAdviceResult:
     usage: TokenUsage
 
 
+@dataclass(frozen=True, slots=True)
+class GroundedRepairAdviceProviderResult(RepairAdviceResult):
+    citations: list[RagCitation]
+
+
 class RepairAdviceProvider(Protocol):
     async def get_repair_advice(self, message: str) -> RepairAdviceResult: ...
 
@@ -18,4 +23,4 @@ class RepairAdviceProvider(Protocol):
 class GroundedRepairAdviceProvider(Protocol):
     async def get_grounded_repair_advice(
         self, message: str, context: str
-    ) -> RepairAdviceResult: ...
+    ) -> GroundedRepairAdviceProviderResult: ...

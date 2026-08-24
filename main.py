@@ -306,6 +306,7 @@ async def chat_rag(
     return RagChatResponse(
         status=result.status,
         advice=result.advice,
+        citations=result.citations,
         model=result.model,
         usage=result.usage,
         sources=[

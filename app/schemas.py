@@ -101,6 +101,7 @@ class RagSource(BaseModel):
 class RagChatResponse(BaseModel):
     status: RagAnswerStatus
     advice: RepairAdvice
+    citations: list[RagCitation]
     model: str | None
     usage: TokenUsage | None
     sources: list[RagSource]

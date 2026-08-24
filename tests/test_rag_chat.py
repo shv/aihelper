@@ -4,7 +4,6 @@ from dataclasses import dataclass, field
 import pytest
 from fastapi.testclient import TestClient
 
-from app.llm.base import RepairAdviceResult
 from app.llm.exceptions import (
     LLMAuthenticationError,
     LLMError,
@@ -17,6 +16,7 @@ from app.rag.models import DocumentChunk, SearchResult
 from app.rag.service import GroundedRepairAdviceResult
 from app.schemas import (
     RagAnswerStatus,
+    RagCitation,
     RepairAdvice,
     RepairRisk,
     RiskLevel,
@@ -60,22 +60,34 @@ def make_result(
     *,
     sources: list[SearchResult] | None = None,
 ) -> GroundedRepairAdviceResult:
-    advice_result = RepairAdviceResult(
-        advice=RepairAdvice(
-            summary="Перед плиткой подготовьте основание",
-            clarifying_questions=["Какая поверхность основания?"],
-            recommendations=[
-                "Очистить основание",
-                "Нанести грунтовку и гидроизоляцию",
-            ],
-            risks=[
-                RepairRisk(
-                    level=RiskLevel.MEDIUM,
-                    description="Отслоение плитки",
-                    mitigation="Соблюдать технологию подготовки",
+    advice = RepairAdvice(
+        summary="Перед плиткой подготовьте основание",
+        clarifying_questions=["Какая поверхность основания?"],
+        recommendations=[
+            "Очистить основание",
+            "Нанести грунтовку и гидроизоляцию",
+        ],
+        risks=[
+            RepairRisk(
+                level=RiskLevel.MEDIUM,
+                description="Отслоение плитки",
+                mitigation="Соблюдать технологию подготовки",
+            )
+        ],
+        requires_professional=False,
+    )
+    return GroundedRepairAdviceResult(
+        status=RagAnswerStatus.ANSWERED,
+        advice=advice,
+        citations=(
+            []
+            if sources is None
+            else [
+                RagCitation(
+                    source_id="tile-waterproofing",
+                    quote="Основание очищают, грунтуют и гидроизолируют.",
                 )
-            ],
-            requires_professional=False,
+            ]
         ),
         model="fake-model",
         usage=TokenUsage(
@@ -83,12 +95,6 @@ def make_result(
             output_tokens=50,
             total_tokens=150,
         ),
-    )
-    return GroundedRepairAdviceResult(
-        status=RagAnswerStatus.ANSWERED,
-        advice=advice_result.advice,
-        model=advice_result.model,
-        usage=advice_result.usage,
         sources=[] if sources is None else sources,
     )
 
@@ -103,6 +109,7 @@ def make_insufficient_context_result() -> GroundedRepairAdviceResult:
             risks=[],
             requires_professional=False,
         ),
+        citations=[],
         model=None,
         usage=None,
         sources=[],
@@ -157,6 +164,12 @@ def test_chat_rag_returns_grounded_advice_and_sources(
             ],
             "requires_professional": False,
         },
+        "citations": [
+            {
+                "source_id": "tile-waterproofing",
+                "quote": "Основание очищают, грунтуют и гидроизолируют.",
+            }
+        ],
         "model": "fake-model",
         "usage": {
             "input_tokens": 100,
@@ -212,6 +225,7 @@ def test_chat_rag_returns_explicit_insufficient_context_response(
             "risks": [],
             "requires_professional": False,
         },
+        "citations": [],
         "model": None,
         "usage": None,
         "sources": [],

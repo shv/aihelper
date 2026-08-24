@@ -3,12 +3,13 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from app.llm.base import GroundedRepairAdviceProvider
+from app.rag.citation import validate_citations
 from app.rag.context import build_rag_context
 from app.rag.embeddings import EmbeddingProvider
 from app.rag.fusion import reciprocal_rank_fusion
 from app.rag.models import SearchResult
 from app.rag.reranker import Reranker
-from app.schemas import RagAnswerStatus, RepairAdvice, TokenUsage
+from app.schemas import RagAnswerStatus, RagCitation, RepairAdvice, TokenUsage
 
 
 class SearchStore(Protocol):
@@ -30,6 +31,7 @@ class SearchStore(Protocol):
 class GroundedRepairAdviceResult:
     status: RagAnswerStatus
     advice: RepairAdvice
+    citations: list[RagCitation]
     model: str | None
     usage: TokenUsage | None
     sources: list[SearchResult]
@@ -138,6 +140,7 @@ class RagService:
                     risks=[],
                     requires_professional=False,
                 ),
+                citations=[],
                 model=None,
                 usage=None,
                 sources=[],
@@ -149,9 +152,12 @@ class RagService:
             message=message, context=context
         )
 
+        validate_citations(advice_result.citations, relevant_results)
+
         return GroundedRepairAdviceResult(
             status=RagAnswerStatus.ANSWERED,
             advice=advice_result.advice,
+            citations=advice_result.citations,
             model=advice_result.model,
             usage=advice_result.usage,
             sources=relevant_results,

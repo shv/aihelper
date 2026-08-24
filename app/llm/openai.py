@@ -16,9 +16,9 @@ from app.llm.exceptions import (
     LLMTimeoutError,
     LLMUnavailableError,
 )
-from app.schemas import RepairAdvice, TokenUsage
+from app.schemas import GroundedRepairAdvice, RepairAdvice, TokenUsage
 
-from .base import RepairAdviceResult
+from .base import GroundedRepairAdviceProviderResult, RepairAdviceResult
 from .prompts import (
     GROUNDED_REPAIR_ASSISTANT_INSTRUCTIONS,
     REPAIR_ASSISTANT_INSTRUCTIONS,
@@ -42,19 +42,42 @@ class OpenAIRepairAdviceProvider:
 
     async def get_repair_advice(self, message: str) -> RepairAdviceResult:
         return await self._request_repair_advice(
-            input_text=message, instructions=REPAIR_ASSISTANT_INSTRUCTIONS
+            input_text=message,
+            instructions=REPAIR_ASSISTANT_INSTRUCTIONS,
+            text_format=RepairAdvice,
         )
 
     async def get_grounded_repair_advice(
         self, message: str, context: str
-    ) -> RepairAdviceResult:
-        return await self._request_repair_advice(
+    ) -> GroundedRepairAdviceProviderResult:
+        result = await self._request_repair_advice(
             input_text=build_grounded_input(message, context),
             instructions=GROUNDED_REPAIR_ASSISTANT_INSTRUCTIONS,
+            text_format=GroundedRepairAdvice,
+        )
+
+        if not isinstance(result.advice, GroundedRepairAdvice):
+            raise LLMInvalidResponseError(
+                "OpenAI did not return grounded repair advice"
+            )
+
+        grounded_advice = result.advice
+
+        return GroundedRepairAdviceProviderResult(
+            advice=RepairAdvice(
+                summary=grounded_advice.summary,
+                clarifying_questions=grounded_advice.clarifying_questions,
+                recommendations=grounded_advice.recommendations,
+                risks=grounded_advice.risks,
+                requires_professional=grounded_advice.requires_professional,
+            ),
+            citations=grounded_advice.citations,
+            model=result.model,
+            usage=result.usage,
         )
 
     async def _request_repair_advice(
-        self, input_text: str, instructions: str
+        self, input_text: str, instructions: str, text_format: type[RepairAdvice]
     ) -> RepairAdviceResult:
         try:
             response = await self._client.responses.parse(
@@ -62,7 +85,7 @@ class OpenAIRepairAdviceProvider:
                 reasoning={"effort": "low"},
                 instructions=instructions,
                 input=input_text,
-                text_format=RepairAdvice,
+                text_format=text_format,
             )
         except APITimeoutError as error:
             raise LLMTimeoutError("OpenAI request timed out") from error

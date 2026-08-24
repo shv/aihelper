@@ -28,7 +28,7 @@ from app.llm.prompts import (
     GROUNDED_REPAIR_ASSISTANT_INSTRUCTIONS,
     REPAIR_ASSISTANT_INSTRUCTIONS,
 )
-from app.schemas import RepairAdvice
+from app.schemas import GroundedRepairAdvice, RagCitation, RepairAdvice
 
 
 def test_both_repair_prompts_include_common_instructions_once() -> None:
@@ -66,6 +66,10 @@ def test_grounded_prompt_contains_only_context_bound_mode_rules() -> None:
     )
     assert (
         "сначала задай уточняющие вопросы" not in GROUNDED_REPAIR_ASSISTANT_INSTRUCTIONS
+    )
+    assert "source_id должен точно совпадать" in GROUNDED_REPAIR_ASSISTANT_INSTRUCTIONS
+    assert "дословным непрерывным фрагментом" in (
+        GROUNDED_REPAIR_ASSISTANT_INSTRUCTIONS
     )
 
 
@@ -179,14 +183,19 @@ def test_build_grounded_input_rejects_invalid_context_json() -> None:
 async def test_provider_sends_grounded_input_with_separate_instructions(
     context_payload: list[dict[str, str]],
 ) -> None:
-    advice = RepairAdvice(
+    citation = RagCitation(
+        source_id="tile-waterproofing",
+        quote="Основание грунтуют и гидроизолируют.",
+    )
+    grounded_advice = GroundedRepairAdvice(
         summary="Ответ по базе знаний",
         clarifying_questions=[],
         recommendations=["Подготовить основание"],
         risks=[],
         requires_professional=False,
+        citations=[citation],
     )
-    parse_mock = AsyncMock(return_value=make_raw_response(advice))
+    parse_mock = AsyncMock(return_value=make_raw_response(grounded_advice))
     provider = OpenAIRepairAdviceProvider(
         client=make_client(parse_mock),
         model="fake-model",
@@ -196,14 +205,43 @@ async def test_provider_sends_grounded_input_with_separate_instructions(
 
     result = await provider.get_grounded_repair_advice(message, context)
 
-    assert result.advice == advice
+    assert result.advice == RepairAdvice(
+        summary=grounded_advice.summary,
+        clarifying_questions=grounded_advice.clarifying_questions,
+        recommendations=grounded_advice.recommendations,
+        risks=grounded_advice.risks,
+        requires_professional=grounded_advice.requires_professional,
+    )
+    assert result.citations == [citation]
     parse_mock.assert_awaited_once_with(
         model="fake-model",
         reasoning={"effort": "low"},
         instructions=GROUNDED_REPAIR_ASSISTANT_INSTRUCTIONS,
         input=build_grounded_input(message, context),
-        text_format=RepairAdvice,
+        text_format=GroundedRepairAdvice,
     )
+
+
+@pytest.mark.asyncio
+async def test_grounded_provider_rejects_non_grounded_parsed_advice() -> None:
+    plain_advice = RepairAdvice(
+        summary="Ответ без citations",
+        clarifying_questions=[],
+        recommendations=[],
+        risks=[],
+        requires_professional=False,
+    )
+    parse_mock = AsyncMock(return_value=make_raw_response(plain_advice))
+    provider = OpenAIRepairAdviceProvider(
+        client=make_client(parse_mock),
+        model="fake-model",
+    )
+
+    with pytest.raises(
+        LLMInvalidResponseError,
+        match="OpenAI did not return grounded repair advice",
+    ):
+        await provider.get_grounded_repair_advice("Вопрос", "[]")
 
 
 @pytest.mark.asyncio
