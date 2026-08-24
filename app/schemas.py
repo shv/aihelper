@@ -52,6 +52,20 @@ class RepairAdvice(BaseModel):
     )
 
 
+class RagCitation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_id: str = Field(min_length=1, description="ID фрагмента базы знаний")
+    quote: str = Field(min_length=1, description="Дословная цитата из текста источника")
+
+
+class GroundedRepairAdvice(RepairAdvice):
+    citations: list[RagCitation] = Field(
+        min_length=1,
+        description="Дословные цитаты, подтверждающие фактические утверждения ответа",
+    )
+
+
 class ChatRequest(BaseModel):
     message: Annotated[str, Field(min_length=1, max_length=4_000)]
 
