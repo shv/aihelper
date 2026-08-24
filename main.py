@@ -15,6 +15,7 @@ from app.llm.base import GroundedRepairAdviceProvider, RepairAdviceProvider
 from app.llm.openai import OpenAIRepairAdviceProvider
 from app.llm.prompts import REPAIR_ASSISTANT_INSTRUCTIONS
 from app.rag.embeddings import EmbeddingProvider, OpenAIEmbeddingProvider
+from app.rag.reranker import OpenAIReranker, Reranker
 from app.rag.service import RagService, SearchStore
 from app.rag.store import PgVectorStore
 from app.schemas import (
@@ -50,9 +51,11 @@ EMBEDDING_MODEL = "text-embedding-3-small"
 MODEL = "gpt-5.6-luna"  # "gpt-5.6" - дороже
 RAG_VECTOR_CANDIDATE_TOP_K = 10
 RAG_BM25_CANDIDATE_TOP_K = 10
+RAG_RERANK_CANDIDATE_TOP_K = 10
 RAG_CONTEXT_TOP_K = 3
 RAG_RRF_K = 60
 RAG_MIN_VECTOR_SCORE = 0.45
+RAG_MIN_RERANK_SCORE = 2.0
 
 
 @lru_cache
@@ -255,6 +258,10 @@ def get_search_store() -> SearchStore:
     return PgVectorStore(dsn=os.environ["DATABASE_URL"])
 
 
+def get_reranker(client: OpenAIClientDependency) -> Reranker:
+    return OpenAIReranker(client=client, model=MODEL)
+
+
 EmbeddingProviderDependency = Annotated[
     EmbeddingProvider, Depends(get_embedding_provider)
 ]
@@ -265,22 +272,28 @@ GroundedProviderDependency = Annotated[
     GroundedRepairAdviceProvider, Depends(get_grounded_repair_advice_provider)
 ]
 
+RerankerDependency = Annotated[Reranker, Depends(get_reranker)]
+
 
 def get_rag_service(
     embedding_provider: EmbeddingProviderDependency,
     search_store: SearchStoreDependency,
+    reranker: RerankerDependency,
     advice_provider: GroundedProviderDependency,
 ) -> RagService:
     return RagService(
         embedding_provider=embedding_provider,
         search_store=search_store,
+        reranker=reranker,
         advice_provider=advice_provider,
         embedding_model=EMBEDDING_MODEL,
         vector_candidate_top_k=RAG_VECTOR_CANDIDATE_TOP_K,
         bm25_candidate_top_k=RAG_BM25_CANDIDATE_TOP_K,
+        rerank_candidate_top_k=RAG_RERANK_CANDIDATE_TOP_K,
         context_top_k=RAG_CONTEXT_TOP_K,
         rrf_k=RAG_RRF_K,
         min_vector_score=RAG_MIN_VECTOR_SCORE,
+        min_rerank_score=RAG_MIN_RERANK_SCORE,
     )
 
 
