@@ -14,6 +14,7 @@ from app.http_errors import register_exception_handlers
 from app.llm.base import GroundedRepairAdviceProvider, RepairAdviceProvider
 from app.llm.openai import OpenAIRepairAdviceProvider
 from app.llm.prompts import REPAIR_ASSISTANT_INSTRUCTIONS
+from app.rag.context import TiktokenTokenCounter, TokenCounter
 from app.rag.embeddings import EmbeddingProvider, OpenAIEmbeddingProvider
 from app.rag.reranker import OpenAIReranker, Reranker
 from app.rag.service import RagService, SearchStore
@@ -53,9 +54,11 @@ RAG_VECTOR_CANDIDATE_TOP_K = 10
 RAG_BM25_CANDIDATE_TOP_K = 10
 RAG_RERANK_CANDIDATE_TOP_K = 10
 RAG_CONTEXT_TOP_K = 3
+RAG_CONTEXT_MAX_TOKENS = 4000
 RAG_RRF_K = 60
 RAG_MIN_VECTOR_SCORE = 0.45
 RAG_MIN_RERANK_SCORE = 2.0
+TOKEN_ENCODING = "o200k_base"
 
 
 @lru_cache
@@ -262,6 +265,11 @@ def get_reranker(client: OpenAIClientDependency) -> Reranker:
     return OpenAIReranker(client=client, model=MODEL)
 
 
+@lru_cache
+def get_token_counter() -> TokenCounter:
+    return TiktokenTokenCounter(encoding_name=TOKEN_ENCODING)
+
+
 EmbeddingProviderDependency = Annotated[
     EmbeddingProvider, Depends(get_embedding_provider)
 ]
@@ -274,23 +282,28 @@ GroundedProviderDependency = Annotated[
 
 RerankerDependency = Annotated[Reranker, Depends(get_reranker)]
 
+TokenCounterDependency = Annotated[TokenCounter, Depends(get_token_counter)]
+
 
 def get_rag_service(
     embedding_provider: EmbeddingProviderDependency,
     search_store: SearchStoreDependency,
     reranker: RerankerDependency,
+    token_counter: TokenCounterDependency,
     advice_provider: GroundedProviderDependency,
 ) -> RagService:
     return RagService(
         embedding_provider=embedding_provider,
         search_store=search_store,
         reranker=reranker,
+        token_counter=token_counter,
         advice_provider=advice_provider,
         embedding_model=EMBEDDING_MODEL,
         vector_candidate_top_k=RAG_VECTOR_CANDIDATE_TOP_K,
         bm25_candidate_top_k=RAG_BM25_CANDIDATE_TOP_K,
         rerank_candidate_top_k=RAG_RERANK_CANDIDATE_TOP_K,
         context_top_k=RAG_CONTEXT_TOP_K,
+        context_max_tokens=RAG_CONTEXT_MAX_TOKENS,
         rrf_k=RAG_RRF_K,
         min_vector_score=RAG_MIN_VECTOR_SCORE,
         min_rerank_score=RAG_MIN_RERANK_SCORE,

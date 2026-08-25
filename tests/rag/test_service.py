@@ -5,6 +5,7 @@ import pytest
 
 from app.llm.base import GroundedRepairAdviceProviderResult
 from app.llm.exceptions import LLMInvalidResponseError
+from app.rag.context import serialize_context_payload
 from app.rag.models import DocumentChunk, SearchResult
 from app.rag.service import GroundedRepairAdviceResult, RagService
 from app.schemas import RagAnswerStatus, RagCitation, RepairAdvice, TokenUsage
@@ -18,6 +19,7 @@ CONTEXT_TOP_K = 3
 RRF_K = 60
 MIN_VECTOR_SCORE = 0.45
 MIN_RERANK_SCORE = 2.0
+CONTEXT_MAX_TOKENS = 10_000
 
 
 class FakeEmbeddingProvider:
@@ -28,6 +30,15 @@ class FakeEmbeddingProvider:
     async def embed(self, texts: list[str]) -> list[list[float]]:
         self.calls.append(texts)
         return self._embeddings
+
+
+@dataclass
+class CharacterTokenCounter:
+    calls: list[str] = field(default_factory=list)
+
+    def count_tokens(self, text: str) -> int:
+        self.calls.append(text)
+        return len(text)
 
 
 @dataclass
@@ -123,12 +134,14 @@ def make_service(
     embedding_provider: FakeEmbeddingProvider,
     search_store: FakeSearchStore,
     reranker: FakeReranker,
+    token_counter: CharacterTokenCounter,
     advice_provider: FakeGroundedAdviceProvider,
     *,
     vector_candidate_top_k: int,
     bm25_candidate_top_k: int,
     rerank_candidate_top_k: int,
     context_top_k: int,
+    context_max_tokens: int,
     rrf_k: int,
     min_vector_score: float,
     min_rerank_score: float,
@@ -137,12 +150,14 @@ def make_service(
         embedding_provider=embedding_provider,
         search_store=search_store,
         reranker=reranker,
+        token_counter=token_counter,
         advice_provider=advice_provider,
         embedding_model=EMBEDDING_MODEL,
         vector_candidate_top_k=vector_candidate_top_k,
         bm25_candidate_top_k=bm25_candidate_top_k,
         rerank_candidate_top_k=rerank_candidate_top_k,
         context_top_k=context_top_k,
+        context_max_tokens=context_max_tokens,
         rrf_k=rrf_k,
         min_vector_score=min_vector_score,
         min_rerank_score=min_rerank_score,
@@ -159,11 +174,13 @@ def make_default_service(
         embedding_provider,
         search_store,
         reranker,
+        CharacterTokenCounter(),
         advice_provider,
         vector_candidate_top_k=VECTOR_CANDIDATE_TOP_K,
         bm25_candidate_top_k=BM25_CANDIDATE_TOP_K,
         rerank_candidate_top_k=RERANK_CANDIDATE_TOP_K,
         context_top_k=CONTEXT_TOP_K,
+        context_max_tokens=CONTEXT_MAX_TOKENS,
         rrf_k=RRF_K,
         min_vector_score=MIN_VECTOR_SCORE,
         min_rerank_score=MIN_RERANK_SCORE,
@@ -309,11 +326,13 @@ async def test_applies_rerank_threshold_before_context_top_k() -> None:
         FakeEmbeddingProvider(),
         FakeSearchStore(vector_results=vector_results, bm25_results=[]),
         reranker,
+        CharacterTokenCounter(),
         FakeGroundedAdviceProvider(make_advice_result("chunk-4", "Text chunk-4")),
         vector_candidate_top_k=VECTOR_CANDIDATE_TOP_K,
         bm25_candidate_top_k=BM25_CANDIDATE_TOP_K,
         rerank_candidate_top_k=RERANK_CANDIDATE_TOP_K,
         context_top_k=2,
+        context_max_tokens=CONTEXT_MAX_TOKENS,
         rrf_k=RRF_K,
         min_vector_score=MIN_VECTOR_SCORE,
         min_rerank_score=MIN_RERANK_SCORE,
@@ -405,6 +424,84 @@ async def test_rejects_provider_citation_not_present_in_final_context() -> None:
     assert len(advice_provider.calls) == 1
 
 
+@pytest.mark.asyncio
+async def test_context_budget_skips_oversized_source_before_provider() -> None:
+    oversized = SearchResult(
+        chunk=DocumentChunk(
+            id="oversized",
+            title="Oversized",
+            text="x" * 500,
+            metadata={"category": "tile"},
+        ),
+        score=3.0,
+    )
+    small = make_search_result("small", score=3.0)
+    small_context = serialize_context_payload([small])
+    token_counter = CharacterTokenCounter()
+    advice_provider = FakeGroundedAdviceProvider(
+        make_advice_result("small", "Text small")
+    )
+    service = make_service(
+        FakeEmbeddingProvider(),
+        FakeSearchStore(vector_results=[oversized, small], bm25_results=[]),
+        FakeReranker(results=[oversized, small]),
+        token_counter,
+        advice_provider,
+        vector_candidate_top_k=VECTOR_CANDIDATE_TOP_K,
+        bm25_candidate_top_k=BM25_CANDIDATE_TOP_K,
+        rerank_candidate_top_k=RERANK_CANDIDATE_TOP_K,
+        context_top_k=CONTEXT_TOP_K,
+        context_max_tokens=len(small_context),
+        rrf_k=RRF_K,
+        min_vector_score=MIN_VECTOR_SCORE,
+        min_rerank_score=MIN_RERANK_SCORE,
+    )
+
+    result = await service.get_repair_advice("Вопрос", category=None)
+
+    assert result.sources == [small]
+    assert advice_provider.calls == [("Вопрос", small_context)]
+    assert any("oversized" in text for text in token_counter.calls)
+
+
+@pytest.mark.asyncio
+async def test_context_budget_abstains_when_no_source_fits() -> None:
+    oversized = SearchResult(
+        chunk=DocumentChunk(
+            id="oversized",
+            title="Oversized",
+            text="x" * 500,
+            metadata={"category": "tile"},
+        ),
+        score=3.0,
+    )
+    advice_provider = FakeGroundedAdviceProvider(
+        make_advice_result("placeholder", "Text placeholder")
+    )
+    service = make_service(
+        FakeEmbeddingProvider(),
+        FakeSearchStore(vector_results=[oversized], bm25_results=[]),
+        FakeReranker(results=[oversized]),
+        CharacterTokenCounter(),
+        advice_provider,
+        vector_candidate_top_k=VECTOR_CANDIDATE_TOP_K,
+        bm25_candidate_top_k=BM25_CANDIDATE_TOP_K,
+        rerank_candidate_top_k=RERANK_CANDIDATE_TOP_K,
+        context_top_k=CONTEXT_TOP_K,
+        context_max_tokens=2,
+        rrf_k=RRF_K,
+        min_vector_score=MIN_VECTOR_SCORE,
+        min_rerank_score=MIN_RERANK_SCORE,
+    )
+
+    result = await service.get_repair_advice("Вопрос", category=None)
+
+    assert result.status is RagAnswerStatus.INSUFFICIENT_CONTEXT
+    assert result.sources == []
+    assert result.citations == []
+    assert advice_provider.calls == []
+
+
 @pytest.mark.parametrize(
     ("parameter", "message"),
     [
@@ -412,6 +509,7 @@ async def test_rejects_provider_citation_not_present_in_final_context() -> None:
         ("bm25_candidate_top_k", "bm25_candidate_top_k must be positive"),
         ("rerank_candidate_top_k", "rerank_candidate_top_k must be positive"),
         ("context_top_k", "context_top_k must be positive"),
+        ("context_max_tokens", "context_max_tokens must be positive"),
         ("rrf_k", "rrf_k must be positive"),
     ],
 )
@@ -426,6 +524,7 @@ def test_rejects_non_positive_integer_configuration(
         "bm25_candidate_top_k": BM25_CANDIDATE_TOP_K,
         "rerank_candidate_top_k": RERANK_CANDIDATE_TOP_K,
         "context_top_k": CONTEXT_TOP_K,
+        "context_max_tokens": CONTEXT_MAX_TOKENS,
         "rrf_k": RRF_K,
     }
     parameters[parameter] = value
@@ -435,6 +534,7 @@ def test_rejects_non_positive_integer_configuration(
             embedding_provider=FakeEmbeddingProvider(),
             search_store=FakeSearchStore(vector_results=[], bm25_results=[]),
             reranker=FakeReranker(results=[]),
+            token_counter=CharacterTokenCounter(),
             advice_provider=FakeGroundedAdviceProvider(
                 make_advice_result("placeholder", "Text placeholder")
             ),
@@ -443,6 +543,7 @@ def test_rejects_non_positive_integer_configuration(
             bm25_candidate_top_k=parameters["bm25_candidate_top_k"],
             rerank_candidate_top_k=parameters["rerank_candidate_top_k"],
             context_top_k=parameters["context_top_k"],
+            context_max_tokens=parameters["context_max_tokens"],
             rrf_k=parameters["rrf_k"],
             min_vector_score=MIN_VECTOR_SCORE,
             min_rerank_score=MIN_RERANK_SCORE,
@@ -458,6 +559,7 @@ def test_rejects_context_top_k_greater_than_rerank_candidate_top_k() -> None:
             FakeEmbeddingProvider(),
             FakeSearchStore(vector_results=[], bm25_results=[]),
             FakeReranker(results=[]),
+            CharacterTokenCounter(),
             FakeGroundedAdviceProvider(
                 make_advice_result("placeholder", "Text placeholder")
             ),
@@ -465,6 +567,7 @@ def test_rejects_context_top_k_greater_than_rerank_candidate_top_k() -> None:
             bm25_candidate_top_k=BM25_CANDIDATE_TOP_K,
             rerank_candidate_top_k=2,
             context_top_k=3,
+            context_max_tokens=CONTEXT_MAX_TOKENS,
             rrf_k=RRF_K,
             min_vector_score=MIN_VECTOR_SCORE,
             min_rerank_score=MIN_RERANK_SCORE,
@@ -480,6 +583,7 @@ def test_rejects_min_vector_score_outside_cosine_range(
             FakeEmbeddingProvider(),
             FakeSearchStore(vector_results=[], bm25_results=[]),
             FakeReranker(results=[]),
+            CharacterTokenCounter(),
             FakeGroundedAdviceProvider(
                 make_advice_result("placeholder", "Text placeholder")
             ),
@@ -487,6 +591,7 @@ def test_rejects_min_vector_score_outside_cosine_range(
             bm25_candidate_top_k=BM25_CANDIDATE_TOP_K,
             rerank_candidate_top_k=RERANK_CANDIDATE_TOP_K,
             context_top_k=CONTEXT_TOP_K,
+            context_max_tokens=CONTEXT_MAX_TOKENS,
             rrf_k=RRF_K,
             min_vector_score=min_vector_score,
             min_rerank_score=MIN_RERANK_SCORE,
@@ -502,6 +607,7 @@ def test_rejects_min_rerank_score_outside_relevance_range(
             FakeEmbeddingProvider(),
             FakeSearchStore(vector_results=[], bm25_results=[]),
             FakeReranker(results=[]),
+            CharacterTokenCounter(),
             FakeGroundedAdviceProvider(
                 make_advice_result("placeholder", "Text placeholder")
             ),
@@ -509,6 +615,7 @@ def test_rejects_min_rerank_score_outside_relevance_range(
             bm25_candidate_top_k=BM25_CANDIDATE_TOP_K,
             rerank_candidate_top_k=RERANK_CANDIDATE_TOP_K,
             context_top_k=CONTEXT_TOP_K,
+            context_max_tokens=CONTEXT_MAX_TOKENS,
             rrf_k=RRF_K,
             min_vector_score=MIN_VECTOR_SCORE,
             min_rerank_score=min_rerank_score,

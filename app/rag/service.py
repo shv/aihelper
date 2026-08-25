@@ -4,7 +4,7 @@ from typing import Protocol
 
 from app.llm.base import GroundedRepairAdviceProvider
 from app.rag.citation import validate_citations
-from app.rag.context import build_rag_context
+from app.rag.context import TokenCounter, build_rag_context
 from app.rag.embeddings import EmbeddingProvider
 from app.rag.fusion import reciprocal_rank_fusion
 from app.rag.models import SearchResult
@@ -43,6 +43,7 @@ class RagService:
         embedding_provider: EmbeddingProvider,
         search_store: SearchStore,
         reranker: Reranker,
+        token_counter: TokenCounter,
         advice_provider: GroundedRepairAdviceProvider,
         *,
         embedding_model: str,
@@ -50,6 +51,7 @@ class RagService:
         bm25_candidate_top_k: int,
         rerank_candidate_top_k: int,
         context_top_k: int,
+        context_max_tokens: int,
         rrf_k: int,
         min_vector_score: float,
         min_rerank_score: float,
@@ -78,15 +80,20 @@ class RagService:
         if context_top_k > rerank_candidate_top_k:
             raise ValueError("context_top_k must not exceed rerank_candidate_top_k")
 
+        if context_max_tokens <= 0:
+            raise ValueError("context_max_tokens must be positive")
+
         self._embedding_provider = embedding_provider
         self._search_store = search_store
         self._reranker = reranker
+        self._token_counter = token_counter
         self._advice_provider = advice_provider
         self._embedding_model = embedding_model
         self._vector_candidate_top_k = vector_candidate_top_k
         self._bm25_candidate_top_k = bm25_candidate_top_k
         self._rerank_candidate_top_k = rerank_candidate_top_k
         self._context_top_k = context_top_k
+        self._context_max_tokens = context_max_tokens
         self._rrf_k = rrf_k
         self._min_vector_score = min_vector_score
         self._min_rerank_score = min_rerank_score
@@ -130,7 +137,13 @@ class RagService:
             if candidate.score >= self._min_rerank_score
         ][: self._context_top_k]
 
-        if not relevant_results:
+        rag_context = build_rag_context(
+            relevant_results,
+            token_counter=self._token_counter,
+            max_tokens=self._context_max_tokens,
+        )
+
+        if not rag_context.sources:
             return GroundedRepairAdviceResult(
                 status=RagAnswerStatus.INSUFFICIENT_CONTEXT,
                 advice=RepairAdvice(
@@ -146,13 +159,11 @@ class RagService:
                 sources=[],
             )
 
-        context = build_rag_context(relevant_results)
-
         advice_result = await self._advice_provider.get_grounded_repair_advice(
-            message=message, context=context
+            message=message, context=rag_context.text
         )
 
-        validate_citations(advice_result.citations, relevant_results)
+        validate_citations(advice_result.citations, rag_context.sources)
 
         return GroundedRepairAdviceResult(
             status=RagAnswerStatus.ANSWERED,
@@ -160,5 +171,5 @@ class RagService:
             citations=advice_result.citations,
             model=advice_result.model,
             usage=advice_result.usage,
-            sources=relevant_results,
+            sources=rag_context.sources,
         )
