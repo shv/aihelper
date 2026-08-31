@@ -101,41 +101,7 @@ class RagService:
     async def get_repair_advice(
         self, message: str, *, category: str | None = None
     ) -> GroundedRepairAdviceResult:
-        [query_embedding] = await self._embedding_provider.embed([message])
-
-        vector_results, bm25_result = await asyncio.gather(
-            self._search_store.search(
-                query_embedding,
-                embedding_model=self._embedding_model,
-                top_k=self._vector_candidate_top_k,
-                category=category,
-            ),
-            self._search_store.search_bm25(
-                message,
-                top_k=self._bm25_candidate_top_k,
-                category=category,
-            ),
-        )
-
-        relevant_vector_results = [
-            result
-            for result in vector_results
-            if result.score >= self._min_vector_score
-        ]
-
-        fused_candidates = reciprocal_rank_fusion(
-            [relevant_vector_results, bm25_result],
-            rrf_k=self._rrf_k,
-            top_k=self._rerank_candidate_top_k,
-        )
-
-        reranked_candidates = await self._reranker.rerank(message, fused_candidates)
-
-        relevant_results = [
-            candidate
-            for candidate in reranked_candidates
-            if candidate.score >= self._min_rerank_score
-        ][: self._context_top_k]
+        relevant_results = await self.retrieve(message, category=category)
 
         rag_context = build_rag_context(
             relevant_results,
@@ -173,3 +139,36 @@ class RagService:
             usage=advice_result.usage,
             sources=rag_context.sources,
         )
+
+    async def retrieve(
+        self, query: str, *, category: str | None = None
+    ) -> list[SearchResult]:
+        [query_embedding] = await self._embedding_provider.embed([query])
+        vector_results, bm25_results = await asyncio.gather(
+            self._search_store.search(
+                query_embedding,
+                embedding_model=self._embedding_model,
+                top_k=self._vector_candidate_top_k,
+                category=category,
+            ),
+            self._search_store.search_bm25(
+                query, top_k=self._bm25_candidate_top_k, category=category
+            ),
+        )
+        relevant_vector_results = [
+            result
+            for result in vector_results
+            if result.score >= self._min_vector_score
+        ]
+        fused_candidates = reciprocal_rank_fusion(
+            [relevant_vector_results, bm25_results],
+            rrf_k=self._rrf_k,
+            top_k=self._rerank_candidate_top_k,
+        )
+        reranked_candidates = await self._reranker.rerank(query, fused_candidates)
+
+        return [
+            candidate
+            for candidate in reranked_candidates
+            if candidate.score >= self._min_rerank_score
+        ][: self._context_top_k]

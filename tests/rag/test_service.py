@@ -188,6 +188,65 @@ def make_default_service(
 
 
 @pytest.mark.asyncio
+async def test_retrieve_runs_hybrid_pipeline_without_generating_advice() -> None:
+    message = "Что означает C2TE S1?"
+    vector_match = make_search_result("vector-match", score=0.75)
+    weak_vector_match = make_search_result(
+        "weak-vector-match",
+        score=MIN_VECTOR_SCORE - 0.01,
+    )
+    bm25_match = make_search_result("bm25-match", score=5.0)
+    reranked_results = [
+        make_search_result("bm25-match", score=3.0),
+        make_search_result("vector-match", score=2.0),
+        make_search_result("irrelevant", score=1.0),
+    ]
+    embedding_provider = FakeEmbeddingProvider()
+    search_store = FakeSearchStore(
+        vector_results=[vector_match, weak_vector_match],
+        bm25_results=[bm25_match],
+    )
+    reranker = FakeReranker(results=reranked_results)
+    token_counter = CharacterTokenCounter()
+    advice_provider = FakeGroundedAdviceProvider(
+        make_advice_result("bm25-match", "Text bm25-match")
+    )
+    service = make_service(
+        embedding_provider,
+        search_store,
+        reranker,
+        token_counter,
+        advice_provider,
+        vector_candidate_top_k=VECTOR_CANDIDATE_TOP_K,
+        bm25_candidate_top_k=BM25_CANDIDATE_TOP_K,
+        rerank_candidate_top_k=RERANK_CANDIDATE_TOP_K,
+        context_top_k=CONTEXT_TOP_K,
+        context_max_tokens=CONTEXT_MAX_TOKENS,
+        rrf_k=RRF_K,
+        min_vector_score=MIN_VECTOR_SCORE,
+        min_rerank_score=MIN_RERANK_SCORE,
+    )
+
+    results = await service.retrieve(message, category="tile")
+
+    assert results == reranked_results[:2]
+    assert embedding_provider.calls == [[message]]
+    assert search_store.vector_calls == [
+        (QUERY_EMBEDDING, EMBEDDING_MODEL, VECTOR_CANDIDATE_TOP_K, "tile")
+    ]
+    assert search_store.bm25_calls == [(message, BM25_CANDIDATE_TOP_K, "tile")]
+    assert len(reranker.calls) == 1
+    rerank_query, fused_candidates = reranker.calls[0]
+    assert rerank_query == message
+    assert [candidate.chunk.id for candidate in fused_candidates] == [
+        "bm25-match",
+        "vector-match",
+    ]
+    assert token_counter.calls == []
+    assert advice_provider.calls == []
+
+
+@pytest.mark.asyncio
 async def test_get_repair_advice_orchestrates_reranked_hybrid_pipeline() -> None:
     message = "Что означает C2TE S1?"
     explanation = make_search_result("c2te-s1", score=0.60)
