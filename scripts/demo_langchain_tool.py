@@ -2,8 +2,11 @@ import json
 
 from langchain_core.tools import StructuredTool
 
-from app.schemas import TileCalculationInput
-from main import calculate_floor_tiles
+from app.tools.tile import (
+    TileCalculationInput,
+    TileCalculationResult,
+    calculate_floor_tiles,
+)
 
 
 def calculate_floor_tiles_adapter(
@@ -12,7 +15,7 @@ def calculate_floor_tiles_adapter(
     tile_length_cm: float,
     tile_width_cm: float,
     waste_percent: float,
-) -> dict[str, object]:
+) -> TileCalculationResult:
     arguments = TileCalculationInput(
         room_length_m=room_length_m,
         room_width_m=room_width_m,

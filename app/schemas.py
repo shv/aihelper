@@ -4,22 +4,6 @@ from typing import Annotated
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class TileCalculationInput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    room_length_m: float = Field(gt=0, le=100, description="Длина комнаты в метрах")
-    room_width_m: float = Field(gt=0, le=100, description="Ширина комнаты в метрах")
-    tile_length_cm: float = Field(
-        gt=0, le=500, description="Длина плитки в сантиметрах"
-    )
-    tile_width_cm: float = Field(
-        gt=0, le=500, description="Ширина плитки в сантиметрах"
-    )
-    waste_percent: float = Field(
-        ge=0, le=50, description="Запас плитки на подрезку в процентах"
-    )
-
-
 class ToolChatResponse(BaseModel):
     answer: str
     tools_used: list[str]

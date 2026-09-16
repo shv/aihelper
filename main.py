@@ -1,5 +1,4 @@
 import json
-import math
 import os
 from collections.abc import AsyncIterator
 from functools import lru_cache
@@ -25,9 +24,9 @@ from app.schemas import (
     RagChatRequest,
     RagChatResponse,
     RagSource,
-    TileCalculationInput,
     ToolChatResponse,
 )
+from app.tools.tile import TileCalculationInput, calculate_floor_tiles
 
 app = FastAPI(
     title="AI Helper",
@@ -159,22 +158,6 @@ async def chat_stream(
             "X-Accel-Buffering": "no",
         },
     )
-
-
-def calculate_floor_tiles(arguments: TileCalculationInput) -> dict[str, object]:
-    room_area_m2 = arguments.room_length_m * arguments.room_width_m
-    tile_area_m2 = arguments.tile_length_cm * arguments.tile_width_cm / 10000
-    required_area_m2 = room_area_m2 * (1 + arguments.waste_percent / 100)
-    tile_count = math.ceil(required_area_m2 / tile_area_m2)
-    actual_coverage_m2 = tile_count * tile_area_m2
-    return {
-        "room_area_m2": round(room_area_m2, 2),
-        "required_area_m2": round(required_area_m2, 2),
-        "tile_area_m2": round(tile_area_m2, 4),
-        "tile_count": tile_count,
-        "actual_coverage_m2": round(actual_coverage_m2, 2),
-        "waste_percent": arguments.waste_percent,
-    }
 
 
 @app.post("/chat/tools", response_model=ToolChatResponse)
