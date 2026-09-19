@@ -7,11 +7,10 @@ import os
 
 from openai import AsyncOpenAI
 
+from app.rag.demo_documents import CHUNKS
 from app.rag.embeddings import OpenAIEmbeddingProvider
 from app.rag.indexing import RagIndexer
 from app.rag.store import PgVectorStore
-
-from .demo_documents import CHUNKS
 
 MODEL = "text-embedding-3-small"
 

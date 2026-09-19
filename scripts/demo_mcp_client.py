@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 from mcp import Client, StdioServerParameters
+from mcp.types import TextResourceContents
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -32,7 +33,7 @@ async def main() -> None:
         mode="auto",
         input_required_max_rounds=1,
     ) as client:
-        tools_result = await client.list_tools()
+        tools_result = await client.list_tools(cache_mode="use")
         call_result = await client.call_tool(
             "calculate_floor_tiles",
             TOOL_ARGUMENTS,
@@ -43,6 +44,25 @@ async def main() -> None:
 
         if call_result.structured_content is None:
             raise RuntimeError("MCP tool returned no structured content")
+
+        resources_result = await client.list_resources(
+            cache_mode="use",
+        )
+        templates_result = await client.list_resource_templates(
+            cache_mode="use",
+        )
+        resource_result = await client.read_resource(
+            "repair://knowledge/tile-waterproofing",
+            cache_mode="use",
+        )
+
+        if len(resource_result.contents) != 1:
+            raise RuntimeError("Expected exactly one resource content block")
+
+        resource_content = resource_result.contents[0]
+
+        if not isinstance(resource_content, TextResourceContents):
+            raise TypeError("Expected text resource content")
 
         payload = {
             "server": (
@@ -63,6 +83,23 @@ async def main() -> None:
                 )
                 for tool in tools_result.tools
             ],
+            "resources": [
+                resource.model_dump(
+                    mode="json",
+                    by_alias=True,
+                    exclude_none=True,
+                )
+                for resource in resources_result.resources
+            ],
+            "resource_templates": [
+                template.model_dump(
+                    mode="json",
+                    by_alias=True,
+                    exclude_none=True,
+                )
+                for template in templates_result.resource_templates
+            ],
+            "resource": json.loads(resource_content.text),
             "result": call_result.structured_content,
         }
 

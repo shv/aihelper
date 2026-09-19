@@ -71,3 +71,5 @@ CHUNKS = [
         metadata={"category": "tile"},
     ),
 ]
+
+CHUNKS_BY_ID = {chunk.id: chunk for chunk in CHUNKS}

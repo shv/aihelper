@@ -25,6 +25,20 @@ def test_demo_mcp_client_lists_and_calls_tool_over_stdio() -> None:
         "version": "0.1.0",
     }
     assert payload["protocol_version"] == "2026-07-28"
+    assert payload["resources"] == []
+    assert len(payload["resource_templates"]) == 1
+    assert payload["resource_templates"][0]["uriTemplate"] == (
+        "repair://knowledge/{chunk_id}"
+    )
+    assert payload["resource"] == {
+        "id": "tile-waterproofing",
+        "title": "Подготовка мокрой зоны перед укладкой плитки",
+        "text": (
+            "Перед укладкой плитки в мокрой зоне основание очищают, "
+            "грунтуют и выполняют гидроизоляцию."
+        ),
+        "metadata": {"category": "tile"},
+    }
     assert len(payload["tools"]) == 1
     assert payload["tools"][0]["name"] == "calculate_floor_tiles"
     assert payload["result"] == {

@@ -4,12 +4,11 @@ import json
 from openai import AsyncOpenAI
 
 from app.rag.bm25 import Bm25Index
+from app.rag.demo_documents import CHUNKS
 from app.rag.embeddings import OpenAIEmbeddingProvider
 from app.rag.fusion import reciprocal_rank_fusion
 from app.rag.models import EmbeddedChunk
 from app.rag.search import search_top_k
-
-from .demo_documents import CHUNKS
 
 MODEL = "text-embedding-3-small"
 

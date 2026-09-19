@@ -1,6 +1,10 @@
+import json
+
 from mcp.server import MCPServer
+from mcp.server.mcpserver.exceptions import ResourceError
 from mcp.types import ToolAnnotations
 
+from app.rag.demo_documents import CHUNKS_BY_ID
 from app.tools.tile import (
     RoomLengthM,
     RoomWidthM,
@@ -54,6 +58,30 @@ def calculate_floor_tiles_tool(
         waste_percent=waste_percent,
     )
     return calculate_floor_tiles(arguments)
+
+
+@mcp.resource(
+    uri="repair://knowledge/{chunk_id}",
+    name="repair_knowledge_chunk",
+    title="Фрагмент ремонтной базы знаний",
+    description="Получить фрагмент ремонтной базы знаний по его идентификатору.",
+    mime_type="application/json",
+)
+def read_repair_knowledge_chunk(chunk_id: str) -> str:
+    chunk = CHUNKS_BY_ID.get(chunk_id)
+
+    if chunk is None:
+        raise ResourceError(f"Unknown knowledge chunk: {chunk_id}")
+
+    return json.dumps(
+        {
+            "id": chunk.id,
+            "title": chunk.title,
+            "text": chunk.text,
+            "metadata": chunk.metadata,
+        },
+        ensure_ascii=False,
+    )
 
 
 if __name__ == "__main__":
