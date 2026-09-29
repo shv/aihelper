@@ -1,0 +1,19 @@
+name: Main CI
+
+on: [push]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Login to Docker
+      run: echo ${{ secrets.DOCKER_TOKEN }} | docker login -u ${{ secrets.DOCKER_LOGIN }} --password-stdin
+
+    - uses: actions/checkout@v3
+
+    - name: Build the Docker image
+      run: docker build -t ${{ vars.DOCKER_PROJECT }}:latest -f Dockerfile .
+
+    - name: Push image to docker
+      run: docker push ${{ vars.DOCKER_PROJECT }}:latest

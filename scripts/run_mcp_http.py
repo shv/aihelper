@@ -1,13 +1,17 @@
 """Run: `poetry run python -m scripts.run_mcp_http`"""
 
+import os
+
 from app.mcp.server import mcp
 
 
 def main() -> None:
+    mcp_host_ip = os.environ.get("MCP_HOST_IP", "127.0.0.1")
+    mcp_port = os.environ.get("MCP_PORT", "8001")
     mcp.run(
         "streamable-http",
-        host="127.0.0.1",
-        port=8001,
+        host=mcp_host_ip,
+        port=int(mcp_port),
         streamable_http_path="/mcp",
         json_response=False,
         stateless_http=False,
