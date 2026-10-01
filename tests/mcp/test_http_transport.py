@@ -5,15 +5,16 @@ import pytest
 from mcp import Client
 from mcp.client.streamable_http import streamable_http_client
 from mcp.types import TextResourceContents
+from starlette.applications import Starlette
 
 from app.mcp.server import mcp
 
 MCP_URL = "http://127.0.0.1:8001/mcp"
+MCP_BEARER_TOKEN = "unit-test-mcp-bearer-token"
 
 
-@pytest.mark.asyncio
-async def test_mcp_tools_and_resource_over_streamable_http() -> None:
-    app = mcp.streamable_http_app(
+def create_http_app() -> Starlette:
+    return mcp.streamable_http_app(
         host="127.0.0.1",
         streamable_http_path="/mcp",
         json_response=False,
@@ -23,11 +24,17 @@ async def test_mcp_tools_and_resource_over_streamable_http() -> None:
         max_sessions=100,
     )
 
+
+@pytest.mark.asyncio
+async def test_mcp_tools_and_resource_over_streamable_http() -> None:
+    app = create_http_app()
+
     async with (
         app.router.lifespan_context(app),
         httpx2.AsyncClient(
             transport=httpx2.ASGITransport(app=app),
             base_url="http://127.0.0.1:8001",
+            headers={"Authorization": f"Bearer {MCP_BEARER_TOKEN}"},
         ) as http_client,
         Client(
             streamable_http_client(MCP_URL, http_client=http_client),
@@ -67,3 +74,51 @@ async def test_mcp_tools_and_resource_over_streamable_http() -> None:
     content = resource.contents[0]
     assert isinstance(content, TextResourceContents)
     assert json.loads(content.text)["id"] == "tile-waterproofing"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "authorization",
+    [
+        None,
+        "Bearer wrong-token",
+    ],
+    ids=["missing-token", "wrong-token"],
+)
+async def test_mcp_http_rejects_unauthenticated_requests(
+    authorization: str | None,
+) -> None:
+    app = create_http_app()
+    headers = {"Authorization": authorization} if authorization is not None else None
+
+    async with (
+        app.router.lifespan_context(app),
+        httpx2.AsyncClient(
+            transport=httpx2.ASGITransport(app=app),
+            base_url="http://127.0.0.1:8001",
+        ) as http_client,
+    ):
+        response = await http_client.post(
+            "/mcp",
+            headers=headers,
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2026-07-28",
+                    "capabilities": {},
+                    "clientInfo": {
+                        "name": "test-client",
+                        "version": "0.1.0",
+                    },
+                },
+            },
+        )
+
+    assert response.status_code == 401
+    assert response.json() == {
+        "error": "invalid_token",
+        "error_description": "Authentication required",
+    }
+    assert response.headers["www-authenticate"].startswith("Bearer ")

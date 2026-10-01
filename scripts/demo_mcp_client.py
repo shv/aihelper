@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -21,6 +22,7 @@ async def main() -> None:
     server = StdioServerParameters(
         command=sys.executable,
         args=["-m", "app.mcp.server"],
+        env={"MCP_ISSUER_URL": os.environ["MCP_ISSUER_URL"]},
         cwd=PROJECT_ROOT,
         encoding="utf-8",
         encoding_error_handler="strict",
