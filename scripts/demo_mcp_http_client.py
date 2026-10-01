@@ -1,8 +1,12 @@
 import asyncio
 import json
+import os
+import sys
 from pathlib import Path
 
+import httpx2
 from mcp import Client
+from mcp.client.streamable_http import streamable_http_client
 from mcp.types import TextResourceContents
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -17,13 +21,25 @@ TOOL_ARGUMENTS: dict[str, float] = {
 
 
 async def main() -> None:
-    async with Client(
-        "http://127.0.0.1:8001/mcp",
-        raise_exceptions=False,
-        read_timeout_seconds=5.0,
-        mode="auto",
-        input_required_max_rounds=1,
-    ) as client:
+    url = (sys.argv[1] if len(sys.argv) > 1 else None) or "http://127.0.0.1:8001/mcp"
+    token = os.environ["MCP_BEARER_TOKEN"]
+    async with (
+        httpx2.AsyncClient(
+            headers={
+                "Authorization": f"Bearer {token}",
+            },
+        ) as http_client,
+        Client(
+            streamable_http_client(
+                url,
+                http_client=http_client,
+            ),
+            raise_exceptions=False,
+            read_timeout_seconds=5.0,
+            mode="auto",
+            input_required_max_rounds=1,
+        ) as client,
+    ):
         tools_result = await client.list_tools(cache_mode="use")
         call_result = await client.call_tool(
             "calculate_floor_tiles",
