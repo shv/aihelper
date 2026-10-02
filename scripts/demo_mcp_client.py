@@ -22,7 +22,11 @@ async def main() -> None:
     server = StdioServerParameters(
         command=sys.executable,
         args=["-m", "app.mcp.server"],
-        env={"MCP_ISSUER_URL": os.environ["MCP_ISSUER_URL"]},
+        env={
+            "MCP_ISSUER_URL": os.environ["MCP_ISSUER_URL"],
+            "MCP_RESOURCE_SERVER_URL": os.environ["MCP_RESOURCE_SERVER_URL"],
+            "MCP_REQUIRED_SCOPE": os.environ["MCP_REQUIRED_SCOPE"],
+        },
         cwd=PROJECT_ROOT,
         encoding="utf-8",
         encoding_error_handler="strict",

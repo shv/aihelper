@@ -4,13 +4,20 @@ import httpx2
 import pytest
 from mcp import Client
 from mcp.client.streamable_http import streamable_http_client
+from mcp.server.auth.provider import AccessToken
 from mcp.types import TextResourceContents
 from starlette.applications import Starlette
 
-from app.mcp.server import mcp
+from app.mcp.server import (
+    MCP_ISSUER_URL,
+    MCP_REQUIRED_SCOPE,
+    MCP_RESOURCE_SERVER_URL,
+    Auth0TokenVerifier,
+    mcp,
+)
 
 MCP_URL = "http://127.0.0.1:8001/mcp"
-MCP_BEARER_TOKEN = "unit-test-mcp-bearer-token"
+MCP_BEARER_TOKEN = "valid-unit-test-oauth-token"
 
 
 def create_http_app() -> Starlette:
@@ -26,7 +33,26 @@ def create_http_app() -> Starlette:
 
 
 @pytest.mark.asyncio
-async def test_mcp_tools_and_resource_over_streamable_http() -> None:
+async def test_mcp_tools_and_resource_over_streamable_http(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def verify_test_token(
+        _verifier: Auth0TokenVerifier,
+        token: str,
+    ) -> AccessToken | None:
+        if token != MCP_BEARER_TOKEN:
+            return None
+        return AccessToken(
+            token=token,
+            client_id="chatgpt-test-client",
+            scopes=[MCP_REQUIRED_SCOPE],
+            expires_at=None,
+            resource=MCP_RESOURCE_SERVER_URL,
+            subject="auth0|unit-test-user",
+            claims={"iss": MCP_ISSUER_URL},
+        )
+
+    monkeypatch.setattr(Auth0TokenVerifier, "verify_token", verify_test_token)
     app = create_http_app()
 
     async with (
@@ -77,6 +103,28 @@ async def test_mcp_tools_and_resource_over_streamable_http() -> None:
 
 
 @pytest.mark.asyncio
+async def test_mcp_publishes_oauth_protected_resource_metadata() -> None:
+    app = create_http_app()
+
+    async with (
+        app.router.lifespan_context(app),
+        httpx2.AsyncClient(
+            transport=httpx2.ASGITransport(app=app),
+            base_url="http://127.0.0.1:8001",
+        ) as http_client,
+    ):
+        response = await http_client.get("/.well-known/oauth-protected-resource/mcp")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "resource": MCP_RESOURCE_SERVER_URL,
+        "authorization_servers": [MCP_ISSUER_URL],
+        "scopes_supported": [MCP_REQUIRED_SCOPE],
+        "bearer_methods_supported": ["header"],
+    }
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "authorization",
     [
@@ -121,4 +169,10 @@ async def test_mcp_http_rejects_unauthenticated_requests(
         "error": "invalid_token",
         "error_description": "Authentication required",
     }
-    assert response.headers["www-authenticate"].startswith("Bearer ")
+    assert response.headers["www-authenticate"] == (
+        'Bearer error="invalid_token", '
+        'error_description="Authentication required", '
+        'resource_metadata="'
+        "http://127.0.0.1:8001/.well-known/oauth-protected-resource/mcp"
+        '"'
+    )

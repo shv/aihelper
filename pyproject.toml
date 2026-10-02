@@ -12,6 +12,7 @@ dependencies = [
     "langchain-core (>=1.6.1,<2.0.0)",
     "langchain-openai (>=1.6.0,<2.0.0)",
     "mcp[cli] (>=2.2,<3.0)",
+    "pyjwt[crypto] (>=2.14,<3)",
 ]
 
 [dependency-groups]

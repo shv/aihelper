@@ -1,3 +1,54 @@
+"""
+Терминал 1. Запуск сервера
+```
+export MCP_ISSUER_URL='...'
+export MCP_RESOURCE_SERVER_URL='...'
+export MCP_REQUIRED_SCOPE='...'
+
+poetry run python -m scripts.run_mcp_http
+```
+
+
+Терминал 2. Последовательность получения токена (нужно в Auth0 разрешить scope)
+```
+export AUTH0_DOMAIN='dev-0af4kgvu3aggrajc.us.auth0.com'
+export AUTH0_CLIENT_ID='твой-client-id'
+
+read -s "AUTH0_CLIENT_SECRET?Auth0 Client Secret: "
+echo
+```
+
+```
+export MCP_ISSUER_URL='...'
+export MCP_RESOURCE_SERVER_URL='...'
+export MCP_REQUIRED_SCOPE='...'
+```
+
+```
+export MCP_ACCESS_TOKEN="$(
+  curl -fsS \
+    -X POST "https://${AUTH0_DOMAIN}/oauth/token" \
+    --data-urlencode 'grant_type=client_credentials' \
+    --data-urlencode "client_id=${AUTH0_CLIENT_ID}" \
+    --data-urlencode "client_secret=${AUTH0_CLIENT_SECRET}" \
+    --data-urlencode audience=${MCP_ISSUER_URL}" \
+    --data-urlencode scope=${MCP_REQUIRED_SCOPE}" \
+  | poetry run python -c \
+    'import json, sys; print(json.load(sys.stdin)["access_token"])'
+)"
+```
+
+```
+poetry run python -m scripts.run_mcp_http
+```
+
+```
+poetry run python -m scripts.demo_mcp_http_client \
+  http://127.0.0.1:8001/mcp \
+  | json_pp
+```
+"""
+
 import asyncio
 import json
 import os
@@ -22,7 +73,7 @@ TOOL_ARGUMENTS: dict[str, float] = {
 
 async def main() -> None:
     url = (sys.argv[1] if len(sys.argv) > 1 else None) or "http://127.0.0.1:8001/mcp"
-    token = os.environ["MCP_BEARER_TOKEN"]
+    token = os.environ["MCP_ACCESS_TOKEN"]
     async with (
         httpx2.AsyncClient(
             headers={
